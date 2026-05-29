@@ -23,7 +23,7 @@ export default function Login({ supermarketName, onLogin }) {
       <section className="login-panel-left">
         <div className="login-brand-left">
           <div className="login-logo-icon">
-            <BarChart3 size={36} />
+            <BarChart3 size={22} />
           </div>
           <div>
             <h1 className="login-brand-title">
@@ -40,28 +40,28 @@ export default function Login({ supermarketName, onLogin }) {
         <div className="login-features-grid">
           <div className="login-feature-card">
             <div className="login-feature-icon login-feature-icon--blue">
-              <Users size={22} />
+              <Users size={16} />
             </div>
             <strong>Gestión de Colaboradores</strong>
             <span>Administra tu equipo de trabajo</span>
           </div>
           <div className="login-feature-card">
             <div className="login-feature-icon login-feature-icon--indigo">
-              <ClipboardCheck size={22} />
+              <ClipboardCheck size={16} />
             </div>
             <strong>Evaluación KPI</strong>
             <span>Control mensual y diario de indicadores</span>
           </div>
           <div className="login-feature-card">
             <div className="login-feature-icon login-feature-icon--emerald">
-              <TrendingUp size={22} />
+              <TrendingUp size={16} />
             </div>
             <strong>Reportes y Análisis</strong>
             <span>Información clara para tomar decisiones</span>
           </div>
           <div className="login-feature-card">
             <div className="login-feature-icon login-feature-icon--rose">
-              <ShieldCheck size={22} />
+              <ShieldCheck size={16} />
             </div>
             <strong>Seguridad</strong>
             <span>Acceso protegido por roles y permisos</span>
@@ -69,7 +69,7 @@ export default function Login({ supermarketName, onLogin }) {
         </div>
 
         <div className="login-access-badge">
-          <Lock size={14} />
+          <Lock size={12} />
           <span>Acceso <strong>seguro</strong> para personal autorizado</span>
         </div>
       </section>
@@ -77,7 +77,7 @@ export default function Login({ supermarketName, onLogin }) {
       <section className="login-panel-right">
         <div className="login-card-right">
           <div className="login-avatar">
-            <Users size={40} />
+            <Users size={26} />
           </div>
 
           <p className="login-welcome">Bienvenido a</p>
@@ -86,7 +86,7 @@ export default function Login({ supermarketName, onLogin }) {
 
           <form className="login-form" onSubmit={submit}>
             <label className="login-input-group">
-              <span className="login-input-icon"><User size={18} /></span>
+              <span className="login-input-icon"><User size={16} /></span>
               <input
                 name="usuario"
                 type="text"
@@ -97,7 +97,7 @@ export default function Login({ supermarketName, onLogin }) {
               />
             </label>
             <label className="login-input-group">
-              <span className="login-input-icon"><Lock size={18} /></span>
+              <span className="login-input-icon"><Lock size={16} /></span>
               <input
                 name="password"
                 type="password"
@@ -111,7 +111,7 @@ export default function Login({ supermarketName, onLogin }) {
             {error ? <p className="form-error login-error">{error}</p> : null}
 
             <button className="login-btn-submit" type="submit">
-              <LogIn size={18} />
+              <LogIn size={16} />
               Entrar al sistema
             </button>
           </form>
