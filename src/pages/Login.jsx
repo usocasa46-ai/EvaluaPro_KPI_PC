@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { LogIn, ShoppingCart } from "lucide-react";
+import { LogIn, Lock, User, ShieldCheck, BarChart3, Users, ClipboardCheck, TrendingUp } from "lucide-react";
 
 export default function Login({ supermarketName, onLogin }) {
   const [form, setForm] = useState({ usuario: "", password: "" });
@@ -20,39 +20,107 @@ export default function Login({ supermarketName, onLogin }) {
 
   return (
     <main className="login-page">
-      <section className="login-card">
-        <div className="login-brand">
-          <div className="sidebar__logo">
-            <ShoppingCart size={22} />
+      <section className="login-panel-left">
+        <div className="login-brand-left">
+          <div className="login-logo-icon">
+            <BarChart3 size={36} />
           </div>
           <div>
-            <strong>EvaluaPro</strong>
-            <span>{supermarketName || "KPI Supermercado"}</span>
+            <h1 className="login-brand-title">
+              EvaluaPro <span>KPI</span>
+            </h1>
+            <p className="login-brand-subtitle">{supermarketName || "Supermercado"}</p>
           </div>
         </div>
 
-        <form className="login-form" onSubmit={submit}>
-          <h1>Iniciar sesión</h1>
-          <label className="form-field">
-            <span>Usuario</span>
-            <input name="usuario" value={form.usuario} autoComplete="username" onChange={updateField} />
-          </label>
-          <label className="form-field">
-            <span>Contraseña</span>
-            <input
-              name="password"
-              type="password"
-              value={form.password}
-              autoComplete="current-password"
-              onChange={updateField}
-            />
-          </label>
-          {error ? <p className="form-error login-error">{error}</p> : null}
-          <button className="button button--primary" type="submit">
-            <LogIn size={16} />
-            Entrar
-          </button>
-        </form>
+        <p className="login-brand-desc">
+          Sistema de evaluación y seguimiento operativo
+        </p>
+
+        <div className="login-features-grid">
+          <div className="login-feature-card">
+            <div className="login-feature-icon login-feature-icon--blue">
+              <Users size={22} />
+            </div>
+            <strong>Gestión de Colaboradores</strong>
+            <span>Administra tu equipo de trabajo</span>
+          </div>
+          <div className="login-feature-card">
+            <div className="login-feature-icon login-feature-icon--indigo">
+              <ClipboardCheck size={22} />
+            </div>
+            <strong>Evaluación KPI</strong>
+            <span>Control mensual y diario de indicadores</span>
+          </div>
+          <div className="login-feature-card">
+            <div className="login-feature-icon login-feature-icon--emerald">
+              <TrendingUp size={22} />
+            </div>
+            <strong>Reportes y Análisis</strong>
+            <span>Información clara para tomar decisiones</span>
+          </div>
+          <div className="login-feature-card">
+            <div className="login-feature-icon login-feature-icon--rose">
+              <ShieldCheck size={22} />
+            </div>
+            <strong>Seguridad</strong>
+            <span>Acceso protegido por roles y permisos</span>
+          </div>
+        </div>
+
+        <div className="login-access-badge">
+          <Lock size={14} />
+          <span>Acceso <strong>seguro</strong> para personal autorizado</span>
+        </div>
+      </section>
+
+      <section className="login-panel-right">
+        <div className="login-card-right">
+          <div className="login-avatar">
+            <Users size={40} />
+          </div>
+
+          <p className="login-welcome">Bienvenido a</p>
+          <h1 className="login-title">EvaluaPro <span>KPI</span></h1>
+          <p className="login-subtitle">Inicia sesión para continuar</p>
+
+          <form className="login-form" onSubmit={submit}>
+            <label className="login-input-group">
+              <span className="login-input-icon"><User size={18} /></span>
+              <input
+                name="usuario"
+                type="text"
+                placeholder="Usuario"
+                value={form.usuario}
+                autoComplete="username"
+                onChange={updateField}
+              />
+            </label>
+            <label className="login-input-group">
+              <span className="login-input-icon"><Lock size={18} /></span>
+              <input
+                name="password"
+                type="password"
+                placeholder="Contraseña"
+                value={form.password}
+                autoComplete="current-password"
+                onChange={updateField}
+              />
+            </label>
+
+            {error ? <p className="form-error login-error">{error}</p> : null}
+
+            <button className="login-btn-submit" type="submit">
+              <LogIn size={18} />
+              Entrar al sistema
+            </button>
+          </form>
+
+          <footer className="login-footer-right">
+            <span>{supermarketName || "EvaluaPro KPI Supermercado"}</span>
+            <span>Versión 1.0.0</span>
+          </footer>
+        </div>
       </section>
     </main>
   );
