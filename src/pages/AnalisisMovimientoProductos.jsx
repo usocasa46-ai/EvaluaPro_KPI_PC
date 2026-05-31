@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Download, Eye, FileSpreadsheet, Printer, RotateCcw, Upload } from "lucide-react";
 import {
   Bar,
@@ -26,6 +26,12 @@ import {
   saveLastMovementAnalysis,
 } from "../services/productMovementAnalysisService";
 import {
+  clearOldMovementAnalysisDetails,
+  deleteMovementAnalysisDetail,
+  getMovementAnalysisDetail,
+  saveMovementAnalysisDetail,
+} from "../services/productMovementStorageService";
+import {
   canImportProductMovementAnalysis,
   canPrintProductMovementAnalysis,
   canViewProductMovementAnalysis,
@@ -44,14 +50,36 @@ const EMPTY_FILTERS = {
 
 const SUMMARY_CARDS = [
   ["totalCodes", "Total códigos analizados"],
+  ["saldoInicialTotal", "Saldo inicial total"],
   ["entradasEP", "Total entradas EP"],
   ["ventasRF", "Total vendido RF"],
   ["salidasSM", "Total salidas SM"],
   ["totalAjustePA", "Total ajustes PA"],
   ["totalNotaCreditoNE", "Total notas crédito NE"],
-  ["existenciaCalculada", "Existencia final calculada"],
-  ["valorFinalCalculado", "Valor final calculado"],
+  ["existenciaCalculada", "Existencia calculada"],
+  ["saldoFinalRealSistema", "Saldo final real del sistema"],
+  ["diferencia", "Diferencia"],
 ];
+
+const DETAIL_PAGE_SIZE = 100;
+
+const EMPTY_ANALYSIS = {
+  products: [],
+  totals: {},
+  charts: {
+    movementTypeData: [],
+    distributionData: [],
+    existenceByDate: [],
+    topProducts: [],
+  },
+  validRows: [],
+  unknownRows: [],
+  initialBalanceRows: [],
+  filteredRows: [],
+  validRowCount: 0,
+  filteredRowCount: 0,
+  filters: EMPTY_FILTERS,
+};
 
 const MOVEMENT_OPTIONS = [
   { value: "", label: "Todos" },
@@ -115,6 +143,28 @@ function ChartEmpty({ children }) {
   return <div className="product-movement-chart-empty">{children}</div>;
 }
 
+function hasActiveFilters(filters) {
+  return Object.values(filters || {}).some(Boolean);
+}
+
+function normalizeAnalysisShape(analysis) {
+  if (!analysis) return EMPTY_ANALYSIS;
+  return {
+    ...EMPTY_ANALYSIS,
+    ...analysis,
+    products: analysis.products || [],
+    totals: analysis.totals || {},
+    charts: {
+      ...EMPTY_ANALYSIS.charts,
+      ...(analysis.charts || {}),
+    },
+    validRows: analysis.validRows || [],
+    unknownRows: analysis.unknownRows || [],
+    initialBalanceRows: analysis.initialBalanceRows || [],
+    filteredRows: analysis.filteredRows || [],
+  };
+}
+
 export default function AnalisisMovimientoProductos({ activeUser }) {
   const [selectedFile, setSelectedFile] = useState(null);
   const [report, setReport] = useState(() => getLastMovementAnalysis());
@@ -123,22 +173,67 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [detailLimit, setDetailLimit] = useState(DETAIL_PAGE_SIZE);
 
   const canView = canViewProductMovementAnalysis(activeUser);
   const canImport = canImportProductMovementAnalysis(activeUser);
   const canPrint = canPrintProductMovementAnalysis(activeUser);
   const reportRows = report?.rows || [];
-  const analysis = useMemo(() => analyzeMovementsByProduct(reportRows, filters), [filters, reportRows]);
-  const fullAnalysis = useMemo(() => analyzeMovementsByProduct(reportRows), [reportRows]);
-  const warehouseOptions = useMemo(() => uniqueValues(reportRows, "warehouse"), [reportRows]);
+  const liveAnalysis = useMemo(() => (reportRows.length ? analyzeMovementsByProduct(reportRows, filters) : null), [filters, reportRows]);
+  const savedAnalysis = useMemo(
+    () => (!reportRows.length && !hasActiveFilters(filters) ? normalizeAnalysisShape(report?.analysis) : null),
+    [filters, report?.analysis, reportRows.length]
+  );
+  const analysis = liveAnalysis || savedAnalysis || EMPTY_ANALYSIS;
+  const fullAnalysis = useMemo(() => {
+    if (reportRows.length) return analyzeMovementsByProduct(reportRows);
+    return normalizeAnalysisShape(report?.analysis);
+  }, [report?.analysis, reportRows]);
+  const warehouseOptions = useMemo(
+    () => uniqueValues(reportRows.length ? reportRows : analysis.products, "warehouse"),
+    [analysis.products, reportRows]
+  );
   const userOptions = useMemo(() => uniqueValues(reportRows, "user"), [reportRows]);
   const selectedProduct = useMemo(
     () => analysis.products.find((product) => product.code === selectedCode) || null,
     [analysis.products, selectedCode]
   );
+  const visibleDetailRows = useMemo(
+    () => (selectedProduct?.detailRows || []).slice(0, detailLimit),
+    [detailLimit, selectedProduct]
+  );
+  const hiddenDetailRows = Math.max(0, (selectedProduct?.detailRows?.length || 0) - visibleDetailRows.length);
   const conclusionProduct = selectedProduct || analysis.products[0] || null;
   const conclusionLines = useMemo(() => buildProductConclusion(conclusionProduct, filters), [conclusionProduct, filters]);
   const filterLabels = useMemo(() => buildFilterLabels(filters), [filters]);
+
+  useEffect(() => {
+    setDetailLimit(DETAIL_PAGE_SIZE);
+  }, [filters, selectedCode]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadStoredDetails() {
+      if (!report?.analysisId || report?.rows?.length || !report?.hasDetailedData) return;
+
+      try {
+        const storedDetail = await getMovementAnalysisDetail(report.analysisId);
+        if (!cancelled && storedDetail?.rows?.length) {
+          setReport((current) =>
+            current?.analysisId === report.analysisId ? { ...current, rows: storedDetail.rows } : current
+          );
+        }
+      } catch {
+        if (!cancelled) setMessage("Resumen cargado. Vuelve a subir el Excel si necesitas ver el detalle completo.");
+      }
+    }
+
+    loadStoredDetails();
+    return () => {
+      cancelled = true;
+    };
+  }, [report?.analysisId, report?.hasDetailedData, report?.rows?.length]);
 
   if (!canView) {
     return <section className="permission-card">No tienes permiso para ver esta información.</section>;
@@ -171,21 +266,39 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
     setIsProcessing(true);
     try {
       const parsed = await parseProductMovementExcel(selectedFile);
+      const analysisId = `movement-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const nextReport = {
         ...parsed,
+        id: analysisId,
+        analysisId,
         processedAt: new Date().toISOString(),
         processedById: activeUser?.id || "",
         processedByName: activeUser?.nombre || activeUser?.usuario || "",
       };
       const nextAnalysis = analyzeMovementsByProduct(nextReport.rows);
+      let detailSaved = false;
 
-      setReport(nextReport);
-      saveLastMovementAnalysis(nextReport);
+      try {
+        await saveMovementAnalysisDetail(analysisId, nextReport.rows);
+        await clearOldMovementAnalysisDetails(analysisId);
+        detailSaved = true;
+      } catch {
+        detailSaved = false;
+      }
+
+      const storedReport = saveLastMovementAnalysis({ ...nextReport, hasDetailedData: detailSaved }, nextAnalysis);
+
+      setReport({ ...storedReport, rows: nextReport.rows, warnings: nextReport.warnings });
       setFilters(EMPTY_FILTERS);
       setSelectedCode("");
+      setDetailLimit(DETAIL_PAGE_SIZE);
 
       if (!nextAnalysis.validRows.length) {
         setMessage("No se encontraron movimientos válidos para analizar.");
+      } else if (!detailSaved) {
+        setMessage(
+          `Archivo procesado correctamente. Productos analizados: ${nextAnalysis.totals.totalCodes}. El resumen se guardó ligero; el detalle completo quedará disponible durante esta sesión.`
+        );
       } else {
         setMessage(`Archivo procesado correctamente. Productos analizados: ${nextAnalysis.totals.totalCodes}.`);
       }
@@ -197,13 +310,16 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
   }
 
   function clearAnalysis() {
+    const analysisId = report?.analysisId;
     setReport(null);
     setSelectedFile(null);
     setSelectedCode("");
     setFilters(EMPTY_FILTERS);
+    setDetailLimit(DETAIL_PAGE_SIZE);
     setMessage("Análisis limpiado.");
     setError("");
     localStorage.removeItem(PRODUCT_MOVEMENT_LAST_ANALYSIS_KEY);
+    if (analysisId) deleteMovementAnalysisDetail(analysisId).catch(() => {});
   }
 
   function printReport() {
@@ -367,17 +483,21 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
                 <span>{formatNumber(analysis.initialBalanceRows.length)} línea(s) separada(s) del cálculo EP/RF/SM/PA/NE.</span>
               </div>
               <div>
-                <strong>Existencia desde movimientos</strong>
+                <strong>Existencia calculada</strong>
                 <span>{formatNumber(analysis.totals.existenciaCalculada)}</span>
               </div>
               <div>
-                <strong>Existencia con saldo inicial</strong>
-                <span>{formatNumber(analysis.totals.existenciaConSaldoInicial)}</span>
+                <strong>Saldo final real del sistema</strong>
+                <span>{formatNumber(analysis.totals.saldoFinalRealSistema)}</span>
+              </div>
+              <div>
+                <strong>Diferencia</strong>
+                <span>{formatNumber(analysis.totals.diferencia)}</span>
               </div>
             </section>
           ) : null}
 
-          {!fullAnalysis.validRows.length ? (
+          {!(fullAnalysis.validRows.length || fullAnalysis.validRowCount || fullAnalysis.products.length) ? (
             <p className="empty-text">No se encontraron movimientos válidos para analizar.</p>
           ) : null}
 
@@ -412,7 +532,7 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
               <div className="panel-heading">
                 <div>
                   <h2>Existencia acumulada</h2>
-                  <p>Evolución calculada por fecha de contabilización.</p>
+                  <p>Existencia calculada y saldo acumulado por fecha.</p>
                 </div>
               </div>
               {analysis.charts.existenceByDate.length ? (
@@ -423,6 +543,7 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
                     <YAxis />
                     <Tooltip formatter={(value) => formatNumber(value)} />
                     <Line type="monotone" dataKey="existencia" stroke="#0f66ff" strokeWidth={3} dot={{ r: 3 }} />
+                    <Line type="monotone" dataKey="saldoSistema" stroke="#f5b942" strokeWidth={2} dot={{ r: 2 }} connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
@@ -505,6 +626,7 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
                     <th>Número de artículo</th>
                     <th>Descripción</th>
                     <th>Almacén</th>
+                    <th>Saldo inicial</th>
                     <th>Entradas EP</th>
                     <th>Ventas RF</th>
                     <th>Salidas SM</th>
@@ -513,8 +635,8 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
                     <th>NE positivo</th>
                     <th>NE negativo</th>
                     <th>Existencia calculada</th>
-                    <th>Última cantidad acumulada</th>
-                    <th>Valor acumulado final</th>
+                    <th>Saldo final real del sistema</th>
+                    <th>Diferencia</th>
                     <th>Cant. movimientos</th>
                     <th className="no-print">Acción</th>
                   </tr>
@@ -525,6 +647,7 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
                       <td>{product.code}</td>
                       <td>{safeText(product.description)}</td>
                       <td>{safeText(product.warehouse)}</td>
+                      <td>{formatNumber(product.saldoInicial)}</td>
                       <td>{formatNumber(product.entradasEP)}</td>
                       <td>{formatNumber(product.ventasRF)}</td>
                       <td>{formatNumber(product.salidasSM)}</td>
@@ -533,8 +656,8 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
                       <td>{formatNumber(product.notaCreditoNEPositiva)}</td>
                       <td>{formatNumber(product.notaCreditoNENegativa)}</td>
                       <td>{formatNumber(product.existenciaCalculada)}</td>
-                      <td>{formatNumber(product.ultimaCantidadAcumulada)}</td>
-                      <td>{formatNumber(product.valorAcumuladoFinal)}</td>
+                      <td>{formatNumber(product.saldoFinalRealSistema)}</td>
+                      <td>{formatNumber(product.diferencia)}</td>
                       <td>{formatNumber(product.movementCount)}</td>
                       <td className="no-print">
                         <button className="text-button" type="button" onClick={() => setSelectedCode(product.code)}>
@@ -546,7 +669,7 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
                   ))}
                   {!analysis.products.length ? (
                     <tr>
-                      <td colSpan={15}>No hay datos para mostrar con los filtros actuales.</td>
+                      <td colSpan={16}>No hay datos para mostrar con los filtros actuales.</td>
                     </tr>
                   ) : null}
                 </tbody>
@@ -571,6 +694,7 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
                       <th>Documento</th>
                       <th>Tipo detectado</th>
                       <th>Cantidad</th>
+                      <th>Delta aplicado</th>
                       <th>Costos</th>
                       <th>Valor trans.</th>
                       <th>Cantidad acumulada</th>
@@ -579,13 +703,14 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {selectedProduct.detailRows.map((row) => (
+                    {visibleDetailRows.map((row) => (
                       <tr key={row.id}>
                         <td>{safeText(row.dateSystem)}</td>
                         <td>{safeText(row.dateAccounting)}</td>
                         <td>{safeText(row.document)}</td>
                         <td>{safeText(movementLabel(row))}</td>
                         <td>{formatNumber(row.quantity)}</td>
+                        <td>{formatNumber(row.deltaAplicado)}</td>
                         <td>{formatNumber(row.cost)}</td>
                         <td>{formatNumber(row.transactionValue)}</td>
                         <td>{formatNumber(row.accumulatedQuantity)}</td>
@@ -593,9 +718,23 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
                         <td>{safeText(row.user)}</td>
                       </tr>
                     ))}
+                    {!visibleDetailRows.length ? (
+                      <tr>
+                        <td colSpan={11}>No hay detalle cargado para este producto.</td>
+                      </tr>
+                    ) : null}
                   </tbody>
                 </table>
               </div>
+              {hiddenDetailRows ? (
+                <button
+                  className="button button--secondary no-print"
+                  type="button"
+                  onClick={() => setDetailLimit((current) => current + DETAIL_PAGE_SIZE)}
+                >
+                  Ver más ({formatNumber(hiddenDetailRows)} restantes)
+                </button>
+              ) : null}
             </section>
           ) : null}
 

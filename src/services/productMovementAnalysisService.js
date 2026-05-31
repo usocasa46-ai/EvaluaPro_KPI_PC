@@ -21,13 +21,13 @@ const MOVEMENT_LABELS = {
 };
 
 const COLUMN_ALIASES = {
-  code: ["Número de artículo", "Numero de articulo", "Numero de artículo", "Número de articulo", "numerodearticulo", "nmerodeartculo"],
-  description: ["Descripción", "Descripcion", "descripcin"],
-  warehouse: ["Almacén", "Almacen", "almacn"],
+  code: ["Número de artículo", "Numero de articulo", "Numero de artículo", "Número de articulo"],
+  description: ["Descripción", "Descripcion"],
+  warehouse: ["Almacén", "Almacen"],
   dateSystem: ["Fecha del sistema"],
-  dateAccounting: ["Fecha de contabilización", "Fecha de contabilizacion", "fechadecontabilizacin"],
+  dateAccounting: ["Fecha de contabilización", "Fecha de contabilizacion"],
   document: ["Documento"],
-  quantity: ["cantidad", "Cantidad"],
+  quantity: ["Cantidad"],
   cost: ["Costos"],
   transactionValue: ["Valor trans.", "Valor trans"],
   accumulatedQuantity: ["Cantidad acumulada"],
@@ -39,10 +39,6 @@ function compactText(value) {
   return normalizeText(value).replace(/[^a-z0-9]+/g, "");
 }
 
-export function normalizeHeader(header) {
-  return compactText(header);
-}
-
 export function normalizeText(value) {
   return String(value ?? "")
     .normalize("NFD")
@@ -50,6 +46,10 @@ export function normalizeText(value) {
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
+}
+
+export function normalizeHeader(header) {
+  return compactText(header);
 }
 
 export function normalizeNumber(value) {
@@ -102,11 +102,9 @@ function isValidNumber(value) {
   let text = String(value).trim();
   if (!text) return false;
   if (/^\(.*\)$/.test(text)) text = text.slice(1, -1);
-
   text = text.replace(/[^\d,.-]/g, "");
-  if (!/\d/.test(text)) return false;
 
-  return Number.isFinite(normalizeNumber(value));
+  return /\d/.test(text) && Number.isFinite(normalizeNumber(value));
 }
 
 function pad(value) {
@@ -161,7 +159,7 @@ export function excelDateToText(value) {
   return parseExcelDate(value).text;
 }
 
-function excelDateToKey(value) {
+export function excelDateToKey(value) {
   return parseExcelDate(value).key;
 }
 
@@ -184,7 +182,7 @@ function detectedColumnCount(columnMap, keys = REQUIRED_COLUMNS.map((column) => 
 }
 
 export function findMovementSheet(workbook) {
-  let bestCandidate = null;
+  let bestDetectionCandidate = null;
 
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
@@ -195,24 +193,27 @@ export function findMovementSheet(workbook) {
       if (!Array.isArray(row) || !row.some(hasCellValue)) continue;
 
       const columnMap = createColumnMap(row);
-      const score = detectedColumnCount(columnMap);
       const hasDetectionColumns = SHEET_DETECTION_COLUMNS.every((key) => columnMap[key] !== undefined);
+      if (!hasDetectionColumns) continue;
+
       const candidate = {
         sheetName,
         sheetRows,
         headerIndex: rowIndex,
         headers: row,
         columnMap,
-        score,
+        score: detectedColumnCount(columnMap),
         hasDetectionColumns,
       };
 
-      if (hasDetectionColumns && validateMovementColumns(columnMap).length === 0) return candidate;
-      if (!bestCandidate || score > bestCandidate.score) bestCandidate = candidate;
+      if (validateMovementColumns(columnMap).length === 0) return candidate;
+      if (!bestDetectionCandidate || candidate.score > bestDetectionCandidate.score) {
+        bestDetectionCandidate = candidate;
+      }
     }
   }
 
-  return bestCandidate;
+  return bestDetectionCandidate;
 }
 
 export function normalizeMovementType(value) {
@@ -256,14 +257,11 @@ function isRepeatedHeaderRow(row, columnMap) {
   const warehouseCell = normalizeHeader(cellValue(row, columnMap, "warehouse"));
   const documentCell = normalizeHeader(cellValue(row, columnMap, "document"));
   const quantityCell = normalizeHeader(cellValue(row, columnMap, "quantity"));
-  const articleHeaders = new Set(["numerodearticulo", "nmerodeartculo"]);
-  const descriptionHeaders = new Set(["descripcion", "descripcin"]);
-  const warehouseHeaders = new Set(["almacen", "almacn"]);
 
   return (
-    articleHeaders.has(articleCell) ||
-    descriptionHeaders.has(descriptionCell) ||
-    warehouseHeaders.has(warehouseCell) ||
+    articleCell === normalizeHeader("Número de artículo") ||
+    descriptionCell === normalizeHeader("Descripción") ||
+    warehouseCell === normalizeHeader("Almacén") ||
     documentCell === normalizeHeader("Documento") ||
     quantityCell === normalizeHeader("Cantidad")
   );
@@ -302,7 +300,7 @@ export async function parseProductMovementExcel(file) {
   const movementSheet = findMovementSheet(workbook);
 
   if (!movementSheet) {
-    throw new Error("El archivo no contiene encabezados para analizar.");
+    throw new Error("No se encontró una hoja válida con encabezados de movimientos.");
   }
 
   const { sheetName, sheetRows, headerIndex, headers, columnMap } = movementSheet;
@@ -362,6 +360,7 @@ export async function parseProductMovementExcel(file) {
         accumulatedValue: normalizeNumber(rawAccumulatedValue),
         rawAccumulatedQuantity,
         rawAccumulatedValue,
+        hasAccumulatedQuantity: hasCellValue(rawAccumulatedQuantity) && isValidNumber(rawAccumulatedQuantity),
         user: String(cellValue(row, columnMap, "user") ?? "").trim(),
       };
     });
@@ -379,29 +378,41 @@ export async function parseProductMovementExcel(file) {
   };
 }
 
-function movementDelta(row) {
-  const quantity = normalizeNumber(row.quantity);
-  if (row.movementType === "EP") return quantity;
-  if (row.movementType === "RF") return -Math.abs(quantity);
-  if (row.movementType === "SM") return -Math.abs(quantity);
-  if (row.movementType === "PA") return quantity;
-  if (row.movementType === "NE") return quantity;
+function rowDateKey(row) {
+  return row?.dateAccountingKey || row?.dateSystemKey || row?.dateKey || "";
+}
+
+function rowDateText(row) {
+  return row?.dateAccounting || row?.dateSystem || row?.date || "";
+}
+
+function isKnownMovement(row) {
+  return Boolean(row?.movementType && row.movementType !== "SALDO_INICIAL");
+}
+
+export function calculateMovementDelta(row) {
+  const quantity = normalizeNumber(row?.quantity);
+  if (row?.movementType === "EP") return quantity;
+  if (row?.movementType === "RF") return quantity < 0 ? quantity : -Math.abs(quantity);
+  if (row?.movementType === "SM") return quantity < 0 ? quantity : -Math.abs(quantity);
+  if (row?.movementType === "PA") return quantity;
+  if (row?.movementType === "NE") return quantity;
   return 0;
 }
 
 function movementImpact(row) {
-  return Math.abs(movementDelta(row));
+  return Math.abs(calculateMovementDelta(row));
 }
 
 export function applyMovementFilters(rows = [], filters = {}) {
   return rows.filter((row) => {
-    const rowDate = row.dateAccountingKey || row.dateSystemKey || row.dateKey || "";
+    const currentDateKey = rowDateKey(row);
     const rowMovement = row.movementType || "DESCONOCIDO";
 
     if (filters.code && !String(row.code || "").toLowerCase().includes(String(filters.code).toLowerCase())) return false;
-    if (filters.dateExact && rowDate !== filters.dateExact) return false;
-    if (filters.dateFrom && rowDate && rowDate < filters.dateFrom) return false;
-    if (filters.dateTo && rowDate && rowDate > filters.dateTo) return false;
+    if (filters.dateExact && currentDateKey !== filters.dateExact) return false;
+    if (filters.dateFrom && (!currentDateKey || currentDateKey < filters.dateFrom)) return false;
+    if (filters.dateTo && (!currentDateKey || currentDateKey > filters.dateTo)) return false;
     if (filters.movementType && rowMovement !== filters.movementType) return false;
     if (filters.warehouse && row.warehouse !== filters.warehouse) return false;
     if (filters.document && !String(row.document || "").toLowerCase().includes(String(filters.document).toLowerCase())) return false;
@@ -411,28 +422,166 @@ export function applyMovementFilters(rows = [], filters = {}) {
   });
 }
 
-function latestRowValue(rows, rawKey, valueKey) {
-  const row = [...rows].reverse().find((current) => hasCellValue(current[rawKey]));
-  return row ? normalizeNumber(row[valueKey]) : 0;
+function applyBalanceScopeFilters(rows = [], filters = {}) {
+  return rows.filter((row) => {
+    if (filters.code && !String(row.code || "").toLowerCase().includes(String(filters.code).toLowerCase())) return false;
+    if (filters.warehouse && row.warehouse !== filters.warehouse) return false;
+    return true;
+  });
 }
 
-function latestInitialBalance(rows) {
-  const initialRow = [...rows].reverse().find((row) => row.isInitialBalance);
-  if (!initialRow) return 0;
-  if (hasCellValue(initialRow.rawAccumulatedQuantity)) return normalizeNumber(initialRow.accumulatedQuantity);
-  return normalizeNumber(initialRow.quantity);
+function isInsideDateWindow(row, filters = {}) {
+  const currentDateKey = rowDateKey(row);
+  if (filters.dateExact) return currentDateKey === filters.dateExact;
+  if (filters.dateFrom && (!currentDateKey || currentDateKey < filters.dateFrom)) return false;
+  if (filters.dateTo && (!currentDateKey || currentDateKey > filters.dateTo)) return false;
+  return true;
 }
 
-export function calculateProductMovementSummary(productRows = [], allProductRows = productRows) {
-  const orderedRows = [...allProductRows].sort((left, right) => left.rowNumber - right.rowNumber);
+function sortRowsByDateThenRow(rows = []) {
+  return [...rows].sort((left, right) => {
+    const leftDate = rowDateKey(left);
+    const rightDate = rowDateKey(right);
+    if (leftDate && rightDate && leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+    return (left.rowNumber || 0) - (right.rowNumber || 0);
+  });
+}
+
+function groupRowsBy(rows = [], getKey) {
+  return rows.reduce((map, row) => {
+    const key = getKey(row) || "__SIN_VALOR__";
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(row);
+    return map;
+  }, new Map());
+}
+
+function initialBalanceValue(row) {
+  if (!row) return 0;
+  if (row.hasAccumulatedQuantity || (hasCellValue(row.rawAccumulatedQuantity) && isValidNumber(row.rawAccumulatedQuantity))) {
+    return normalizeNumber(row.accumulatedQuantity);
+  }
+  return normalizeNumber(row.quantity);
+}
+
+function calculateInitialBalanceForWarehouse(rows = [], filters = {}) {
+  const orderedRows = sortRowsByDateThenRow(rows);
+  const startDate = filters.dateExact || filters.dateFrom || "";
+
+  if (startDate) {
+    const previousAccumulatedRows = orderedRows.filter(
+      (row) => rowDateKey(row) && rowDateKey(row) < startDate && row.hasAccumulatedQuantity
+    );
+    const previousAccumulated = previousAccumulatedRows.at(-1);
+    if (previousAccumulated) {
+      return {
+        value: normalizeNumber(previousAccumulated.accumulatedQuantity),
+        hasBalance: true,
+        source: "Cantidad acumulada anterior al periodo",
+      };
+    }
+  }
+
+  let initialRows = orderedRows.filter((row) => row.isInitialBalance || row.movementType === "SALDO_INICIAL");
+  if (startDate) {
+    const beforePeriodInitialRows = initialRows.filter((row) => !rowDateKey(row) || rowDateKey(row) <= startDate);
+    if (beforePeriodInitialRows.length) initialRows = beforePeriodInitialRows;
+  }
+
+  const initialRow = initialRows.at(-1);
+  if (!initialRow) return { value: 0, hasBalance: false, source: "" };
+
+  return {
+    value: initialBalanceValue(initialRow),
+    hasBalance: true,
+    source: "Saldo inicial detectado",
+  };
+}
+
+export function calculateInitialBalance(rows = [], filters = {}) {
+  let value = 0;
+  let hasBalance = false;
+  const sources = new Set();
+  const rowsByWarehouse = groupRowsBy(rows, (row) => row.warehouse || "");
+
+  rowsByWarehouse.forEach((warehouseRows) => {
+    const balance = calculateInitialBalanceForWarehouse(warehouseRows, filters);
+    value += balance.value;
+    hasBalance = hasBalance || balance.hasBalance;
+    if (balance.source) sources.add(balance.source);
+  });
+
+  return { value: round(value), hasBalance, source: [...sources].join(", ") };
+}
+
+function calculateRealFinalBalanceForWarehouse(rows = [], filters = {}) {
+  const scopedRows = sortRowsByDateThenRow(rows).filter((row) => isInsideDateWindow(row, filters) && row.hasAccumulatedQuantity);
+  const finalRow = scopedRows.at(-1);
+  if (!finalRow) return { value: 0, hasBalance: false, row: null };
+  return { value: normalizeNumber(finalRow.accumulatedQuantity), hasBalance: true, row: finalRow };
+}
+
+export function calculateRealFinalBalance(rows = [], filters = {}) {
+  let value = 0;
+  let hasBalance = false;
+  const rowsByWarehouse = groupRowsBy(rows, (row) => row.warehouse || "");
+
+  rowsByWarehouse.forEach((warehouseRows) => {
+    const balance = calculateRealFinalBalanceForWarehouse(warehouseRows, filters);
+    value += balance.value;
+    hasBalance = hasBalance || balance.hasBalance;
+  });
+
+  return { value: round(value), hasBalance };
+}
+
+function calculateFinalAccumulatedValue(rows = [], filters = {}) {
+  let value = 0;
+  const rowsByWarehouse = groupRowsBy(rows, (row) => row.warehouse || "");
+
+  rowsByWarehouse.forEach((warehouseRows) => {
+    const finalRow = sortRowsByDateThenRow(warehouseRows)
+      .filter((row) => isInsideDateWindow(row, filters) && hasCellValue(row.rawAccumulatedValue))
+      .at(-1);
+    if (finalRow) value += normalizeNumber(finalRow.accumulatedValue);
+  });
+
+  return round(value);
+}
+
+function roundSummary(summary) {
+  return {
+    ...summary,
+    entradasEP: round(summary.entradasEP),
+    ventasRF: round(summary.ventasRF),
+    salidasSM: round(summary.salidasSM),
+    ajustePAPositivo: round(summary.ajustePAPositivo),
+    ajustePANegativo: round(summary.ajustePANegativo),
+    totalAjustePA: round(summary.totalAjustePA),
+    notaCreditoNEPositiva: round(summary.notaCreditoNEPositiva),
+    notaCreditoNENegativa: round(summary.notaCreditoNENegativa),
+    totalNotaCreditoNE: round(summary.totalNotaCreditoNE),
+    saldoInicial: round(summary.saldoInicial),
+    existenciaCalculada: round(summary.existenciaCalculada),
+    saldoFinalRealSistema: round(summary.saldoFinalRealSistema),
+    diferencia: round(summary.diferencia),
+    valorAcumuladoFinal: round(summary.valorAcumuladoFinal),
+    valorFinalCalculado: round(summary.valorFinalCalculado),
+  };
+}
+
+export function calculateProductMovementSummary(productRows = [], allProductRows = productRows, filters = {}, detailRows = productRows) {
+  const orderedRows = sortRowsByDateThenRow(allProductRows);
+  const movementRows = productRows.filter(isKnownMovement);
   const warehouseValues = [...new Set(orderedRows.map((row) => row.warehouse).filter(Boolean))];
   const description = orderedRows.find((row) => row.description)?.description || "";
-  const saldoInicial = latestInitialBalance(orderedRows);
-  const hasInitialBalance = orderedRows.some((row) => row.isInitialBalance);
+  const initialBalance = calculateInitialBalance(orderedRows, filters);
+  const realFinalBalance = calculateRealFinalBalance(orderedRows, filters);
 
-  const summary = productRows.reduce(
+  const summary = movementRows.reduce(
     (current, row) => {
       const quantity = normalizeNumber(row.quantity);
+      current.deltaMovimientos += calculateMovementDelta(row);
 
       if (row.movementType === "EP") {
         current.entradasEP += quantity;
@@ -451,8 +600,8 @@ export function calculateProductMovementSummary(productRows = [], allProductRows
       return current;
     },
     {
-      code: productRows[0]?.code || orderedRows[0]?.code || "",
-      productCode: productRows[0]?.code || orderedRows[0]?.code || "",
+      code: movementRows[0]?.code || orderedRows[0]?.code || "",
+      productCode: movementRows[0]?.code || orderedRows[0]?.code || "",
       description,
       warehouse: warehouseValues.join(", "),
       entradasEP: 0,
@@ -462,78 +611,50 @@ export function calculateProductMovementSummary(productRows = [], allProductRows
       ajustePANegativo: 0,
       notaCreditoNEPositiva: 0,
       notaCreditoNENegativa: 0,
+      totalAjustePA: 0,
+      totalNotaCreditoNE: 0,
+      saldoInicial: initialBalance.value,
+      hasInitialBalance: initialBalance.hasBalance,
+      initialBalanceSource: initialBalance.source,
+      deltaMovimientos: 0,
       existenciaCalculada: 0,
-      existenciaConSaldoInicial: 0,
-      saldoInicial,
-      hasInitialBalance,
-      ultimaCantidadAcumulada: latestRowValue(orderedRows, "rawAccumulatedQuantity", "accumulatedQuantity"),
-      valorAcumuladoFinal: latestRowValue(orderedRows, "rawAccumulatedValue", "accumulatedValue"),
-      movementCount: productRows.length,
-      movements: productRows,
-      detailRows: orderedRows,
+      saldoFinalRealSistema: realFinalBalance.value,
+      hasRealFinalBalance: realFinalBalance.hasBalance,
+      diferencia: 0,
+      valorAcumuladoFinal: calculateFinalAccumulatedValue(orderedRows, filters),
+      valorFinalCalculado: calculateFinalAccumulatedValue(orderedRows, filters),
+      movementCount: movementRows.length,
+      movements: movementRows,
+      detailRows: detailRows.map((row) => ({ ...row, deltaAplicado: round(calculateMovementDelta(row)) })),
     }
   );
 
   summary.totalAjustePA = summary.ajustePAPositivo + summary.ajustePANegativo;
   summary.totalNotaCreditoNE = summary.notaCreditoNEPositiva + summary.notaCreditoNENegativa;
-  summary.existenciaCalculada =
-    summary.entradasEP -
-    summary.ventasRF -
-    summary.salidasSM +
-    summary.ajustePAPositivo +
-    summary.ajustePANegativo +
-    summary.notaCreditoNEPositiva +
-    summary.notaCreditoNENegativa;
-  summary.existenciaConSaldoInicial = summary.hasInitialBalance ? summary.saldoInicial + summary.existenciaCalculada : 0;
+  summary.existenciaCalculada = summary.saldoInicial + summary.deltaMovimientos;
+  summary.diferencia = summary.hasRealFinalBalance ? summary.saldoFinalRealSistema - summary.existenciaCalculada : 0;
 
   return roundSummary(summary);
 }
 
-export function buildProductSummary(validRows = [], allRows = validRows) {
-  const allRowsByCode = allRows.reduce((map, row) => {
-    if (!row.code) return map;
-    if (!map.has(row.code)) map.set(row.code, []);
-    map.get(row.code).push(row);
-    return map;
-  }, new Map());
-
-  const grouped = validRows.reduce((map, row) => {
-    if (!row.code) return map;
-    if (!map.has(row.code)) map.set(row.code, []);
-    map.get(row.code).push(row);
-    return map;
-  }, new Map());
+export function buildProductSummary(validRows = [], balanceRows = validRows, detailRows = validRows, filters = {}) {
+  const balanceRowsByCode = groupRowsBy(balanceRows, (row) => row.code);
+  const detailRowsByCode = groupRowsBy(detailRows, (row) => row.code);
+  const grouped = groupRowsBy(validRows, (row) => row.code);
 
   return [...grouped.entries()]
-    .map(([code, productRows]) => calculateProductMovementSummary(productRows, allRowsByCode.get(code) || productRows))
+    .filter(([code]) => code && code !== "__SIN_VALOR__")
+    .map(([code, productRows]) =>
+      calculateProductMovementSummary(productRows, balanceRowsByCode.get(code) || productRows, filters, detailRowsByCode.get(code) || productRows)
+    )
     .sort((left, right) => String(left.code).localeCompare(String(right.code)));
-}
-
-function roundSummary(summary) {
-  return {
-    ...summary,
-    entradasEP: round(summary.entradasEP),
-    ventasRF: round(summary.ventasRF),
-    salidasSM: round(summary.salidasSM),
-    ajustePAPositivo: round(summary.ajustePAPositivo),
-    ajustePANegativo: round(summary.ajustePANegativo),
-    totalAjustePA: round(summary.totalAjustePA),
-    notaCreditoNEPositiva: round(summary.notaCreditoNEPositiva),
-    notaCreditoNENegativa: round(summary.notaCreditoNENegativa),
-    totalNotaCreditoNE: round(summary.totalNotaCreditoNE),
-    existenciaCalculada: round(summary.existenciaCalculada),
-    existenciaConSaldoInicial: round(summary.existenciaConSaldoInicial),
-    saldoInicial: round(summary.saldoInicial),
-    ultimaCantidadAcumulada: round(summary.ultimaCantidadAcumulada),
-    valorAcumuladoFinal: round(summary.valorAcumuladoFinal),
-    valorFinalCalculado: round(summary.valorFinalCalculado),
-  };
 }
 
 export function buildGeneralSummary(rows = [], products = []) {
   const totals = products.reduce(
     (current, product) => ({
       totalCodes: current.totalCodes + 1,
+      saldoInicialTotal: current.saldoInicialTotal + product.saldoInicial,
       entradasEP: current.entradasEP + product.entradasEP,
       ventasRF: current.ventasRF + product.ventasRF,
       salidasSM: current.salidasSM + product.salidasSM,
@@ -544,13 +665,15 @@ export function buildGeneralSummary(rows = [], products = []) {
       notaCreditoNENegativa: current.notaCreditoNENegativa + product.notaCreditoNENegativa,
       totalNotaCreditoNE: current.totalNotaCreditoNE + product.totalNotaCreditoNE,
       existenciaCalculada: current.existenciaCalculada + product.existenciaCalculada,
-      existenciaConSaldoInicial:
-        current.existenciaConSaldoInicial + (product.hasInitialBalance ? product.existenciaConSaldoInicial : product.existenciaCalculada),
+      saldoFinalRealSistema: current.saldoFinalRealSistema + product.saldoFinalRealSistema,
+      diferencia: current.diferencia + product.diferencia,
       valorFinalCalculado: current.valorFinalCalculado + product.valorAcumuladoFinal,
       movementCount: current.movementCount + product.movementCount,
+      productsWithRealFinalBalance: current.productsWithRealFinalBalance + (product.hasRealFinalBalance ? 1 : 0),
     }),
     {
       totalCodes: 0,
+      saldoInicialTotal: 0,
       entradasEP: 0,
       ventasRF: 0,
       salidasSM: 0,
@@ -561,10 +684,12 @@ export function buildGeneralSummary(rows = [], products = []) {
       notaCreditoNENegativa: 0,
       totalNotaCreditoNE: 0,
       existenciaCalculada: 0,
-      existenciaConSaldoInicial: 0,
+      saldoFinalRealSistema: 0,
+      diferencia: 0,
       valorFinalCalculado: 0,
       movementCount: 0,
       saldoInicialCount: rows.filter((row) => row.isInitialBalance).length,
+      productsWithRealFinalBalance: 0,
     }
   );
 
@@ -572,7 +697,7 @@ export function buildGeneralSummary(rows = [], products = []) {
 }
 
 export function buildMovementChartsData(rows = [], products = []) {
-  const validRows = rows.filter((row) => row.movementType && row.movementType !== "SALDO_INICIAL");
+  const validRows = rows.filter(isKnownMovement);
   const movementTypeData = ["EP", "RF", "SM", "PA", "NE"].map((type) => {
     const typeRows = validRows.filter((row) => row.movementType === type);
     return {
@@ -581,7 +706,6 @@ export function buildMovementChartsData(rows = [], products = []) {
       label: MOVEMENT_LABELS[type],
       cantidad: round(
         typeRows.reduce((total, row) => {
-          if (type === "EP") return total + normalizeNumber(row.quantity);
           if (type === "RF" || type === "SM") return total + Math.abs(normalizeNumber(row.quantity));
           return total + normalizeNumber(row.quantity);
         }, 0)
@@ -597,19 +721,22 @@ export function buildMovementChartsData(rows = [], products = []) {
     label: item.label,
   }));
 
-  const orderedRows = [...validRows].sort((left, right) => {
-    const dateCompare = String(left.dateKey || "").localeCompare(String(right.dateKey || ""));
-    return dateCompare || left.rowNumber - right.rowNumber;
-  });
-  let runningExistence = 0;
+  const orderedRows = sortRowsByDateThenRow(validRows);
+  let runningExistence = products.reduce((total, product) => total + normalizeNumber(product.saldoInicial), 0);
   const existenceByDateMap = new Map();
+
   orderedRows.forEach((row) => {
-    runningExistence += movementDelta(row);
-    const dateKey = row.dateKey || `fila-${row.rowNumber}`;
-    existenceByDateMap.set(dateKey, {
-      date: row.date || `Fila ${row.rowNumber}`,
-      existencia: round(runningExistence),
-    });
+    runningExistence += calculateMovementDelta(row);
+    const dateKey = rowDateKey(row) || `fila-${row.rowNumber}`;
+    const current = existenceByDateMap.get(dateKey) || {
+      date: rowDateText(row) || `Fila ${row.rowNumber}`,
+      existencia: runningExistence,
+      saldoSistema: null,
+    };
+
+    current.existencia = round(runningExistence);
+    if (row.hasAccumulatedQuantity) current.saldoSistema = round(row.accumulatedQuantity);
+    existenceByDateMap.set(dateKey, current);
   });
 
   const topProducts = [...products]
@@ -618,7 +745,13 @@ export function buildMovementChartsData(rows = [], products = []) {
       description: product.description,
       ventasRF: product.ventasRF,
       salidasSM: product.salidasSM,
-      impacto: round(product.ventasRF + product.salidasSM),
+      impacto: round(
+        Math.abs(product.entradasEP) +
+          product.ventasRF +
+          product.salidasSM +
+          Math.abs(product.totalAjustePA) +
+          Math.abs(product.totalNotaCreditoNE)
+      ),
     }))
     .sort((left, right) => right.impacto - left.impacto)
     .slice(0, 5);
@@ -633,7 +766,7 @@ export function buildMovementChartsData(rows = [], products = []) {
 
 function movementImpactLabel(product) {
   const impacts = [
-    ["EP", product.entradasEP],
+    ["EP", Math.abs(product.entradasEP)],
     ["RF", product.ventasRF],
     ["SM", product.salidasSM],
     ["PA", Math.abs(product.totalAjustePA)],
@@ -648,21 +781,24 @@ export function buildProductConclusion(productSummary, filters = {}) {
 
   const productName = productSummary.description || productSummary.code;
   const period =
-    filters.dateExact || filters.dateFrom || filters.dateTo
-      ? "en el periodo filtrado"
-      : "en el archivo analizado";
+    filters.dateExact || filters.dateFrom || filters.dateTo ? "en el periodo filtrado" : "en el archivo analizado";
   const impact = movementImpactLabel(productSummary);
   const lines = [
     `El producto ${productName} tuvo ${round(productSummary.entradasEP)} unidades de entrada y ${round(productSummary.ventasRF)} unidades vendidas ${period}.`,
-    `La existencia calculada final es ${round(productSummary.existenciaCalculada)}.`,
+    `Saldo inicial considerado: ${round(productSummary.saldoInicial)}. Existencia calculada: ${round(productSummary.existenciaCalculada)}.`,
   ];
+
+  if (productSummary.hasRealFinalBalance) {
+    lines.push(
+      `Saldo final real del sistema: ${round(productSummary.saldoFinalRealSistema)}. Diferencia: ${round(productSummary.diferencia)}.`
+    );
+  } else {
+    lines.push("No se encontró una cantidad acumulada válida para comparar el saldo final real del sistema.");
+  }
 
   if (impact) lines.push(`El movimiento con mayor impacto fue ${impact}.`);
   if (!productSummary.ajustePAPositivo && !productSummary.ajustePANegativo) {
     lines.push("No se encontraron ajustes PA en este periodo.");
-  }
-  if (productSummary.hasInitialBalance) {
-    lines.push(`Saldo inicial detectado: ${round(productSummary.saldoInicial)}. Existencia con saldo inicial: ${round(productSummary.existenciaConSaldoInicial)}.`);
   }
 
   return lines;
@@ -670,10 +806,11 @@ export function buildProductConclusion(productSummary, filters = {}) {
 
 export function analyzeMovementsByProduct(rows = [], filters = {}) {
   const filteredRows = applyMovementFilters(rows, filters);
-  const initialBalanceRows = filteredRows.filter((row) => row.code && (row.isInitialBalance || row.movementType === "SALDO_INICIAL"));
-  const validRows = filteredRows.filter((row) => row.code && row.movementType && row.movementType !== "SALDO_INICIAL");
+  const balanceRows = applyBalanceScopeFilters(rows, filters);
+  const validRows = filteredRows.filter((row) => row.code && isKnownMovement(row));
   const unknownRows = filteredRows.filter((row) => row.code && !row.movementType && row.document);
-  const products = buildProductSummary(validRows, filteredRows);
+  const initialBalanceRows = filteredRows.filter((row) => row.code && (row.isInitialBalance || row.movementType === "SALDO_INICIAL"));
+  const products = buildProductSummary(validRows, balanceRows, filteredRows, filters);
   const totals = buildGeneralSummary(filteredRows, products);
 
   return {
@@ -699,6 +836,7 @@ export function exportMovementAnalysisToCsv(products = []) {
     "Número de artículo",
     "Descripción",
     "Almacén",
+    "Saldo inicial",
     "Entradas EP",
     "Ventas RF",
     "Salidas SM",
@@ -707,8 +845,8 @@ export function exportMovementAnalysisToCsv(products = []) {
     "NE positivo",
     "NE negativo",
     "Existencia calculada",
-    "Última cantidad acumulada",
-    "Valor acumulado final",
+    "Saldo final real del sistema",
+    "Diferencia",
     "Cantidad movimientos",
   ];
   const lines = products.map((product) =>
@@ -716,6 +854,7 @@ export function exportMovementAnalysisToCsv(products = []) {
       product.code,
       product.description,
       product.warehouse,
+      product.saldoInicial,
       product.entradasEP,
       product.ventasRF,
       product.salidasSM,
@@ -724,8 +863,8 @@ export function exportMovementAnalysisToCsv(products = []) {
       product.notaCreditoNEPositiva,
       product.notaCreditoNENegativa,
       product.existenciaCalculada,
-      product.ultimaCantidadAcumulada,
-      product.valorAcumuladoFinal,
+      product.saldoFinalRealSistema,
+      product.diferencia,
       product.movementCount,
     ]
       .map(csvEscape)
@@ -737,20 +876,23 @@ export function exportMovementAnalysisToCsv(products = []) {
 
 export function exportMovementAnalysisToExcel(report, analysis, selectedProduct = null) {
   const generalRows = [
-    { Indicador: "Total números de artículo analizados", Valor: analysis.totals.totalCodes },
+    { Indicador: "Total códigos analizados", Valor: analysis.totals.totalCodes },
+    { Indicador: "Saldo inicial total", Valor: analysis.totals.saldoInicialTotal },
     { Indicador: "Total entradas EP", Valor: analysis.totals.entradasEP },
     { Indicador: "Total vendido RF", Valor: analysis.totals.ventasRF },
     { Indicador: "Total salidas SM", Valor: analysis.totals.salidasSM },
     { Indicador: "Total ajustes PA", Valor: analysis.totals.totalAjustePA },
     { Indicador: "Total notas crédito NE", Valor: analysis.totals.totalNotaCreditoNE },
-    { Indicador: "Existencia final calculada", Valor: analysis.totals.existenciaCalculada },
-    { Indicador: "Valor final calculado", Valor: analysis.totals.valorFinalCalculado },
+    { Indicador: "Existencia calculada", Valor: analysis.totals.existenciaCalculada },
+    { Indicador: "Saldo final real del sistema", Valor: analysis.totals.saldoFinalRealSistema },
+    { Indicador: "Diferencia", Valor: analysis.totals.diferencia },
   ];
 
   const summaryRows = analysis.products.map((product) => ({
     "Número de artículo": product.code,
     Descripción: product.description,
     Almacén: product.warehouse,
+    "Saldo inicial": product.saldoInicial,
     "Entradas EP": product.entradasEP,
     "Ventas RF": product.ventasRF,
     "Salidas SM": product.salidasSM,
@@ -759,8 +901,8 @@ export function exportMovementAnalysisToExcel(report, analysis, selectedProduct 
     "NE positivo": product.notaCreditoNEPositiva,
     "NE negativo": product.notaCreditoNENegativa,
     "Existencia calculada": product.existenciaCalculada,
-    "Última cantidad acumulada": product.ultimaCantidadAcumulada,
-    "Valor acumulado final": product.valorAcumuladoFinal,
+    "Saldo final real del sistema": product.saldoFinalRealSistema,
+    Diferencia: product.diferencia,
     "Cantidad movimientos": product.movementCount,
   }));
 
@@ -774,6 +916,7 @@ export function exportMovementAnalysisToExcel(report, analysis, selectedProduct 
     "Número documento": row.documentNumber,
     "Tipo detectado": row.movementType || row.movementRaw,
     Cantidad: row.quantity,
+    "Delta aplicado": row.deltaAplicado ?? calculateMovementDelta(row),
     Costos: row.cost,
     "Valor trans.": row.transactionValue,
     "Cantidad acumulada": row.accumulatedQuantity,
@@ -798,13 +941,102 @@ export function exportMovementAnalysisToExcel(report, analysis, selectedProduct 
   XLSX.writeFile(workbook, `analisis_movimientos_${report?.fileName || "productos"}_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
-export function saveLastMovementAnalysis(report) {
-  localStorage.setItem(PRODUCT_MOVEMENT_LAST_ANALYSIS_KEY, JSON.stringify(report));
+function summarizeRow(row) {
+  return {
+    id: row.id,
+    rowNumber: row.rowNumber,
+    code: row.code,
+    description: row.description,
+    warehouse: row.warehouse,
+    document: row.document,
+    movementType: row.movementType,
+    quantity: row.quantity,
+    date: row.date,
+  };
+}
+
+function stripProductDetails(product) {
+  const { movements, detailRows, ...lightProduct } = product;
+  return lightProduct;
+}
+
+function createLightAnalysis(analysis) {
+  if (!analysis) return null;
+  return {
+    products: (analysis.products || []).map(stripProductDetails),
+    totals: analysis.totals || {},
+    charts: analysis.charts || {},
+    unknownRows: (analysis.unknownRows || []).slice(0, 50).map(summarizeRow),
+    initialBalanceRows: (analysis.initialBalanceRows || []).slice(0, 50).map(summarizeRow),
+    validRowCount: analysis.validRows?.length || 0,
+    filteredRowCount: analysis.filteredRows?.length || 0,
+    filters: analysis.filters || {},
+  };
+}
+
+export function createLightMovementAnalysisReport(report, analysis = null, filters = {}) {
+  const analysisId = report?.analysisId || report?.id || `movement-${Date.now()}`;
+  const nextAnalysis = analysis || report?.analysis || (report?.rows ? analyzeMovementsByProduct(report.rows, filters) : null);
+
+  return {
+    id: analysisId,
+    analysisId,
+    storageMode: "indexedDB",
+    hasDetailedData: Boolean(report?.hasDetailedData || report?.rows?.length),
+    fileName: report?.fileName || "",
+    sheetName: report?.sheetName || "",
+    parsedAt: report?.parsedAt || "",
+    processedAt: report?.processedAt || "",
+    processedById: report?.processedById || "",
+    processedByName: report?.processedByName || "",
+    rowCount: report?.rows?.length || report?.rowCount || 0,
+    warnings: (report?.warnings || []).slice(0, 50),
+    analysis: createLightAnalysis(nextAnalysis),
+  };
+}
+
+export function saveLastMovementAnalysis(report, analysis = null, filters = {}) {
+  const lightReport = createLightMovementAnalysisReport(report, analysis, filters);
+
+  if (typeof localStorage === "undefined") return lightReport;
+
+  try {
+    localStorage.setItem(PRODUCT_MOVEMENT_LAST_ANALYSIS_KEY, JSON.stringify(lightReport));
+  } catch {
+    const minimalReport = {
+      ...lightReport,
+      warnings: [],
+      analysis: {
+        products: [],
+        totals: lightReport.analysis?.totals || {},
+        charts: {},
+        unknownRows: [],
+        initialBalanceRows: [],
+        validRowCount: lightReport.analysis?.validRowCount || 0,
+        filteredRowCount: lightReport.analysis?.filteredRowCount || 0,
+        filters: lightReport.analysis?.filters || {},
+      },
+    };
+    try {
+      localStorage.setItem(PRODUCT_MOVEMENT_LAST_ANALYSIS_KEY, JSON.stringify(minimalReport));
+    } catch {
+      return minimalReport;
+    }
+    return minimalReport;
+  }
+
+  return lightReport;
 }
 
 export function getLastMovementAnalysis() {
   try {
-    return JSON.parse(localStorage.getItem(PRODUCT_MOVEMENT_LAST_ANALYSIS_KEY) || "null");
+    if (typeof localStorage === "undefined") return null;
+    const saved = JSON.parse(localStorage.getItem(PRODUCT_MOVEMENT_LAST_ANALYSIS_KEY) || "null");
+    if (saved?.rows?.length) {
+      const migratedAnalysis = analyzeMovementsByProduct(saved.rows);
+      return saveLastMovementAnalysis(saved, migratedAnalysis);
+    }
+    return saved;
   } catch {
     return null;
   }
