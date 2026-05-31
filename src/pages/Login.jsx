@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BarChart3, ClipboardCheck, Lightbulb, Lock, LogIn, ShieldCheck, TrendingUp, User, Users } from "lucide-react";
+import { ClipboardCheck, Lightbulb, Lock, LogIn, ShieldCheck, TrendingUp, User, Users } from "lucide-react";
 
 export default function Login({ supermarketName, onLogin }) {
   const [form, setForm] = useState({ usuario: "", password: "" });
@@ -21,65 +21,80 @@ export default function Login({ supermarketName, onLogin }) {
   return (
     <main className="login-page">
       <section className="login-shell">
-        <section className="login-panel-left">
-          <div className="login-brand-left">
-            <div className="login-logo-icon">
-              <BarChart3 size={26} />
+        <section className="login-hero">
+          <div className="login-hero-inner">
+            <div className="login-logo">
+              <div className="login-logo-mark" aria-hidden="true">
+                <svg viewBox="0 0 64 64" role="img">
+                  <rect x="7" y="8" width="50" height="48" rx="15" />
+                  <path d="M18 43V31M30 43V24M42 43V18" />
+                  <path d="M18 26l10 6 14-16" />
+                  <path d="M43 16h7v7" />
+                  <circle cx="49" cy="49" r="6" />
+                  <path d="M46.4 49.1l1.8 1.8 3.4-4" />
+                </svg>
+              </div>
+              <div className="login-logo-copy">
+                <h1>
+                  EvaluaPro <span>KPI</span>
+                </h1>
+                <p>{supermarketName || "Supermercado"}</p>
+              </div>
             </div>
-            <div>
-              <h1 className="login-brand-title">
-                EvaluaPro <span>KPI</span>
-              </h1>
-              <p className="login-brand-subtitle">{supermarketName || "Supermercado"}</p>
+
+            <p className="login-hero-text">
+              Sistema de evaluación y seguimiento para impulsar el desempeño y la productividad de tu equipo.
+            </p>
+
+            <div className="login-feature-grid">
+              <article className="login-feature">
+                <div className="login-feature-icon login-feature-icon--blue">
+                  <Lightbulb size={18} />
+                </div>
+                <div>
+                  <strong>Evaluación Inteligente</strong>
+                  <span>Mide y mejora el rendimiento de tu equipo.</span>
+                </div>
+              </article>
+
+              <article className="login-feature">
+                <div className="login-feature-icon login-feature-icon--cyan">
+                  <Users size={18} />
+                </div>
+                <div>
+                  <strong>Gestión de Colaboradores</strong>
+                  <span>Administra áreas, cargos y colaboradores fácilmente.</span>
+                </div>
+              </article>
+
+              <article className="login-feature">
+                <div className="login-feature-icon login-feature-icon--gold">
+                  <TrendingUp size={18} />
+                </div>
+                <div>
+                  <strong>Decisiones con Impacto</strong>
+                  <span>Reportes y KPI para mejores decisiones.</span>
+                </div>
+              </article>
             </div>
-          </div>
 
-          <p className="login-brand-desc">
-            Sistema de evaluación y seguimiento para impulsar el desempeño y la productividad de tu equipo.
-          </p>
-
-          <div className="login-feature-list">
-            <article className="login-feature-card">
-              <div className="login-feature-icon login-feature-icon--blue">
-                <Lightbulb size={18} />
-              </div>
-              <div>
-                <strong>Evaluación Inteligente</strong>
-                <span>Mide y mejora el rendimiento de tu equipo.</span>
-              </div>
-            </article>
-
-            <article className="login-feature-card">
-              <div className="login-feature-icon login-feature-icon--cyan">
-                <Users size={18} />
-              </div>
-              <div>
-                <strong>Gestión de Colaboradores</strong>
-                <span>Administra áreas, cargos y colaboradores fácilmente.</span>
-              </div>
-            </article>
-
-            <article className="login-feature-card">
-              <div className="login-feature-icon login-feature-icon--gold">
-                <TrendingUp size={18} />
-              </div>
-              <div>
-                <strong>Decisiones con Impacto</strong>
-                <span>Reportes y KPI para mejores decisiones.</span>
-              </div>
-            </article>
-          </div>
-
-          <div className="login-access-badge">
-            <ShieldCheck size={15} />
-            <span>Acceso <strong>seguro</strong> para personal autorizado</span>
+            <div className="login-hero-badge">
+              <ShieldCheck size={16} />
+              <span>Acceso <strong>seguro</strong> para personal autorizado</span>
+            </div>
           </div>
         </section>
 
-        <section className="login-panel-right">
-          <div className="login-card-right">
-            <div className="login-avatar">
-              <ClipboardCheck size={24} />
+        <section className="login-panel">
+          <div className="login-access-card">
+            <div className="login-card-header">
+              <div className="login-card-icon">
+                <ClipboardCheck size={23} />
+              </div>
+              <div className="login-security-badge">
+                <ShieldCheck size={14} />
+                Acceso seguro
+              </div>
             </div>
 
             <h1 className="login-title">Iniciar sesión</h1>
