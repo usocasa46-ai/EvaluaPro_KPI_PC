@@ -1,6 +1,7 @@
 import {
   BriefcaseBusiness,
   Activity,
+  Boxes,
   ChartColumn,
   ClipboardCheck,
   KeyRound,
@@ -32,6 +33,7 @@ const iconMap = {
   plantillasKpiArea: Store,
   evaluacionKpiMensual: ChartColumn,
   kpiDiario: Activity,
+  analisisMovimientoProductos: Boxes,
   trasladosPendientes: ClipboardCheck,
   vacaciones: CalendarDays,
   permisos: Clock,

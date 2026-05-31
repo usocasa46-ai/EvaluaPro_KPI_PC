@@ -1,3 +1,5 @@
+import FormOfficialLogo from "./FormOfficialLogo";
+
 const TYPE_OPTIONS = [
   { value: "Licencia matrimonio, 5 días", label: "LICENCIA MATRIMONIO (5 DÍAS)" },
   { value: "Nacimiento, 48 horas", label: "NACIMIENTO (48 HORAS)" },
@@ -13,20 +15,6 @@ function selectedTypes(value) {
   if (Array.isArray(value)) return value;
   if (!value) return [];
   return [value];
-}
-
-function PermitLogo({ configuracion }) {
-  if (configuracion?.logoDataUrl) {
-    return <img src={configuracion.logoDataUrl} alt="Logo empresa" />;
-  }
-
-  return (
-    <div className="permit-official-logo-mark">
-      <span className="permit-official-logo-triangle">▲</span>
-      <strong>ALTERRA</strong>
-      <small>GRUPO</small>
-    </div>
-  );
 }
 
 function DocumentInput({ value, onChange, readOnly, className = "", type = "text" }) {
@@ -102,7 +90,6 @@ function PermitSection({ title, data, onChange, readOnly, license = false }) {
 export default function PermitOfficialForm({
   form,
   readOnly,
-  configuracion,
   onFieldChange,
   onSectionChange,
   onTypeToggle,
@@ -116,7 +103,7 @@ export default function PermitOfficialForm({
           <tbody>
             <tr>
               <td className="permit-header__logo" rowSpan={5}>
-                <PermitLogo configuracion={configuracion} />
+                <FormOfficialLogo />
               </td>
               <td className="permit-header__title" rowSpan={5}>
                 Formulario de Novedades

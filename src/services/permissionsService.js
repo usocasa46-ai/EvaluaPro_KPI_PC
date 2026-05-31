@@ -11,6 +11,7 @@ export const MODULES = [
   { id: "encargados", label: "Encargados" },
   { id: "subgerentes", label: "Subgerentes" },
   { id: "kpiDiario", label: "KPI Diario" },
+  { id: "analisisMovimientoProductos", label: "Análisis Movimientos" },
   { id: "trasladosPendientes", label: "Traslados Pendientes" },
   { id: "evaluacionKpiMensual", label: "Evaluación KPI Mensual" },
   { id: "evaluacionTrimestral", label: "Evaluación Trimestral" },
@@ -331,9 +332,23 @@ export function canAccessTransferPendingModule(user) {
   return false;
 }
 
+export function canViewProductMovementAnalysis(user) {
+  return [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user?.rol);
+}
+
+export function canImportProductMovementAnalysis(user) {
+  if (user?.rol === ROLES.GERENTE) return true;
+  return Boolean(user?.rol === ROLES.ENCARGADO && sameArea(user.areaAsignada, "Recepción de Mercancía"));
+}
+
+export function canPrintProductMovementAnalysis(user) {
+  return canViewProductMovementAnalysis(user);
+}
+
 export function canAccessModule(user, moduleId) {
   if (!user) return false;
   if (moduleId === "trasladosPendientes") return canAccessTransferPendingModule(user);
+  if (moduleId === "analisisMovimientoProductos") return canViewProductMovementAnalysis(user);
 
   if (user.rol === ROLES.GERENTE) {
     return [
@@ -347,6 +362,7 @@ export function canAccessModule(user, moduleId) {
       "plantillasKpiArea",
       "evaluacionKpiMensual",
       "kpiDiario",
+      "analisisMovimientoProductos",
       "trasladosPendientes",
       "vacaciones",
       "permisos",
@@ -367,6 +383,7 @@ export function canAccessModule(user, moduleId) {
       "evaluacionTrimestral",
       "evaluacionKpiMensual",
       "kpiDiario",
+      "analisisMovimientoProductos",
       "trasladosPendientes",
       "vacaciones",
       "permisos",
@@ -384,6 +401,7 @@ export function canAccessModule(user, moduleId) {
       "evaluacionTrimestral",
       "evaluacionKpiMensual",
       "kpiDiario",
+      "analisisMovimientoProductos",
       "trasladosPendientes",
       "vacaciones",
       "permisos",

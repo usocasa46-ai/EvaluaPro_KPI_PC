@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { ArrowLeft, FileText, Printer, Save } from "lucide-react";
+import FormOfficialLogo from "./FormOfficialLogo";
 import {
   QUARTERLY_RATING_ROWS,
   QUARTERLY_SCORE_OPTIONS,
@@ -10,7 +11,6 @@ import {
 } from "../services/quarterlyEvaluationService";
 
 const PAGE_COUNT = 6;
-const LOGO_SRC = "/templates/evaluacion-trimestral/logo-alterra.png";
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -45,7 +45,7 @@ function Header({ page }) {
   return (
     <header className="evaluation-header">
       <div className="evaluation-header__logo">
-        <img src={LOGO_SRC} alt="Alterra Grupo" />
+        <FormOfficialLogo />
       </div>
       <div className="evaluation-header__title">
         Evaluación de Desempeño Nivel

@@ -1,6 +1,15 @@
+import { useState } from "react";
+import { ArrowLeft, CheckCircle2, Download, Upload } from "lucide-react";
 import CrudModule from "../components/CrudModule";
+import Modal from "../components/Modal";
+import {
+  generateCollaboratorTemplate,
+  importValidCollaborators,
+  parseCollaboratorsExcel,
+  validateCollaboratorRows,
+} from "../services/collaboratorImportService";
 import { getKpiTemplatesByAreaAndCargo, getManagerByArea } from "../services/relationsService";
-import { sameArea } from "../services/permissionsService";
+import { ROLES, sameArea } from "../services/permissionsService";
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
@@ -30,10 +39,21 @@ export default function Colaboradores({
   areas,
   encargados,
   kpiTemplates = [],
+  activeUser,
   canCreate,
   canEdit,
   onSave,
 }) {
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkFile, setBulkFile] = useState(null);
+  const [bulkRows, setBulkRows] = useState([]);
+  const [bulkPreview, setBulkPreview] = useState([]);
+  const [bulkError, setBulkError] = useState("");
+  const [bulkMessage, setBulkMessage] = useState("");
+  const canBulkImport = activeUser?.rol === ROLES.GERENTE;
+  const validPreviewRows = bulkPreview.filter((row) => row.valid);
+  const invalidPreviewRows = bulkPreview.filter((row) => !row.valid);
+
   const rows = colaboradores.map((colaborador) => {
     const area = areas.find((item) => item.id === colaborador.areaId || sameArea(item.nombre, colaborador.areaNombre || colaborador.area));
     const manager = encargados.find((item) => {
@@ -54,6 +74,80 @@ export default function Colaboradores({
         : "",
     };
   });
+
+  function importContext() {
+    return {
+      areas,
+      encargados,
+      kpiTemplates,
+      colaboradores,
+    };
+  }
+
+  function resetBulkState() {
+    setBulkFile(null);
+    setBulkRows([]);
+    setBulkPreview([]);
+    setBulkError("");
+    setBulkMessage("");
+  }
+
+  function openBulkImport() {
+    resetBulkState();
+    setBulkOpen(true);
+  }
+
+  async function validateBulkFile() {
+    setBulkError("");
+    setBulkMessage("");
+
+    if (!canBulkImport) {
+      setBulkError("No tienes permiso para realizar carga masiva de colaboradores.");
+      return;
+    }
+
+    if (!bulkFile) {
+      setBulkError("Selecciona un archivo Excel antes de validar.");
+      return;
+    }
+
+    try {
+      const parsedRows = await parseCollaboratorsExcel(bulkFile);
+      const previewRows = validateCollaboratorRows(parsedRows, importContext());
+      setBulkRows(parsedRows);
+      setBulkPreview(previewRows);
+      setBulkMessage(
+        `Archivo validado. Filas válidas: ${previewRows.filter((row) => row.valid).length}. Filas con errores: ${
+          previewRows.filter((row) => !row.valid).length
+        }.`
+      );
+    } catch (error) {
+      setBulkRows([]);
+      setBulkPreview([]);
+      setBulkError(error.message || "No se pudo validar el archivo.");
+    }
+  }
+
+  function importBulkRows() {
+    setBulkError("");
+    setBulkMessage("");
+
+    if (!canBulkImport) {
+      setBulkError("No tienes permiso para realizar carga masiva de colaboradores.");
+      return;
+    }
+
+    if (!validPreviewRows.length) {
+      setBulkError("No hay filas válidas para importar.");
+      return;
+    }
+
+    const imported = importValidCollaborators(validPreviewRows, { onImport: onSave, context: importContext() });
+    setBulkPreview([]);
+    setBulkRows([]);
+    setBulkFile(null);
+    setBulkMessage(`Importación completada. Colaboradores importados: ${imported.length}. Filas omitidas por errores: ${invalidPreviewRows.length}.`);
+  }
 
   function completeFormRelations(name, value, next) {
     const area = areas.find((item) => item.id === next.areaId);
@@ -129,79 +223,205 @@ export default function Colaboradores({
   }
 
   return (
-    <CrudModule
-      title="Colaboradores"
-      subtitle="Ficha básica del personal operativo y relación con su área, encargado y plantilla KPI."
-      rows={rows}
-      canCreate={canCreate}
-      canEdit={canEdit}
-      createLabel="Nuevo colaborador"
-      columns={[
-        { key: "codigoEmpleado", label: "Código" },
-        { key: "nombre", label: "Nombre completo" },
-        { key: "areaNombre", label: "Área" },
-        { key: "cargo", label: "Cargo" },
-        { key: "encargadoNombre", label: "Encargado directo" },
-        { key: "turno", label: "Turno" },
-        { key: "fechaIngreso", label: "Fecha de ingreso" },
-        { key: "estado", label: "Estado" },
-      ]}
-      fields={[
-        { name: "codigoEmpleado", label: "Código de empleado" },
-        { name: "nombre", label: "Nombre completo", required: true },
-        {
-          name: "areaId",
-          label: "Área asignada",
-          type: "select",
-          required: true,
-          options: areas.map((area) => ({ value: area.id, label: area.nombre })),
-        },
-        {
-          name: "encargadoNombre",
-          label: "Encargado asignado",
-          readOnly: true,
-          help: "Se completa automáticamente desde el área seleccionada.",
-        },
-        {
-          name: "cargo",
-          label: "Cargo / puesto",
-          type: "select",
-          required: true,
-          options: (form) =>
-            unique(
-              kpiTemplates
-                .filter((template) => {
-                  return (
-                    template.estado !== "Inactivo" &&
-                    (template.areaId === form.areaId || sameArea(template.areaNombre || template.area, form.areaNombre))
-                  );
-                })
-                .map((template) => template.cargo || template.puesto)
-            ),
-        },
-        { name: "turno", label: "Turno", type: "select", required: true, options: ["Mañana", "Tarde", "Noche", "Mixto"] },
-        { name: "fechaIngreso", label: "Fecha de ingreso", type: "date", required: true },
-        { name: "estado", label: "Estado", type: "select", required: true, options: ["Activo", "Inactivo"] },
-      ]}
-      initialForm={{
-        codigoEmpleado: "",
-        nombre: "",
-        areaId: "",
-        areaNombre: "",
-        encargadoId: "",
-        encargadoNombre: "",
-        cargo: "",
-        turno: "Mañana",
-        fechaIngreso: "",
-        estado: "Activo",
-        kpiTemplateIds: [],
-        indicadoresAsignados: [],
-      }}
-      onFormChange={completeFormRelations}
-      onBeforeSave={normalizeCollaborator}
-      renderFormHint={renderFormHint}
-      onCreate={onSave}
-      onSave={onSave}
-    />
+    <>
+      <CrudModule
+        title="Colaboradores"
+        subtitle="Ficha básica del personal operativo y relación con su área, encargado y plantilla KPI."
+        rows={rows}
+        canCreate={canCreate}
+        canEdit={canEdit}
+        createLabel="Nuevo colaborador"
+        toolbar={
+          canBulkImport ? (
+            <button className="button button--secondary" type="button" onClick={openBulkImport}>
+              <Upload size={16} />
+              Carga masiva
+            </button>
+          ) : (
+            <span className="bulk-import-permission">No tienes permiso para realizar carga masiva de colaboradores.</span>
+          )
+        }
+        columns={[
+          { key: "codigoEmpleado", label: "Código" },
+          { key: "nombre", label: "Nombre completo" },
+          { key: "areaNombre", label: "Área" },
+          { key: "cargo", label: "Cargo" },
+          { key: "encargadoNombre", label: "Encargado directo" },
+          { key: "turno", label: "Turno" },
+          { key: "fechaIngreso", label: "Fecha de ingreso" },
+          { key: "estado", label: "Estado" },
+        ]}
+        fields={[
+          { name: "codigoEmpleado", label: "Código de empleado" },
+          { name: "nombre", label: "Nombre completo", required: true },
+          {
+            name: "areaId",
+            label: "Área asignada",
+            type: "select",
+            required: true,
+            options: areas.map((area) => ({ value: area.id, label: area.nombre })),
+          },
+          {
+            name: "encargadoNombre",
+            label: "Encargado asignado",
+            readOnly: true,
+            help: "Se completa automáticamente desde el área seleccionada.",
+          },
+          {
+            name: "cargo",
+            label: "Cargo / puesto",
+            type: "select",
+            required: true,
+            options: (form) =>
+              unique(
+                kpiTemplates
+                  .filter((template) => {
+                    return (
+                      template.estado !== "Inactivo" &&
+                      (template.areaId === form.areaId || sameArea(template.areaNombre || template.area, form.areaNombre))
+                    );
+                  })
+                  .map((template) => template.cargo || template.puesto)
+              ),
+          },
+          { name: "turno", label: "Turno", type: "select", required: true, options: ["Mañana", "Tarde", "Noche", "Mixto"] },
+          { name: "fechaIngreso", label: "Fecha de ingreso", type: "date", required: true },
+          { name: "estado", label: "Estado", type: "select", required: true, options: ["Activo", "Inactivo"] },
+        ]}
+        initialForm={{
+          codigoEmpleado: "",
+          nombre: "",
+          areaId: "",
+          areaNombre: "",
+          encargadoId: "",
+          encargadoNombre: "",
+          cargo: "",
+          turno: "Mañana",
+          fechaIngreso: "",
+          estado: "Activo",
+          kpiTemplateIds: [],
+          indicadoresAsignados: [],
+        }}
+        onFormChange={completeFormRelations}
+        onBeforeSave={normalizeCollaborator}
+        renderFormHint={renderFormHint}
+        onCreate={onSave}
+        onSave={onSave}
+      />
+
+      {bulkOpen ? (
+        <Modal title="Carga masiva de colaboradores" onClose={() => setBulkOpen(false)}>
+          <section className="bulk-import-panel">
+            {!canBulkImport ? (
+              <>
+                <p className="form-error">No tienes permiso para realizar carga masiva de colaboradores.</p>
+                <footer className="modal__footer">
+                  <button className="button button--ghost" type="button" onClick={() => setBulkOpen(false)}>
+                    <ArrowLeft size={16} />
+                    Volver
+                  </button>
+                </footer>
+              </>
+            ) : (
+              <>
+                <div className="bulk-import-actions">
+                  <button className="button button--secondary" type="button" onClick={generateCollaboratorTemplate}>
+                    <Download size={16} />
+                    Descargar plantilla Excel
+                  </button>
+                  <label className="button button--secondary">
+                    <Upload size={16} />
+                    Subir archivo Excel
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls"
+                      hidden
+                      onChange={(event) => {
+                        setBulkFile(event.target.files?.[0] || null);
+                        setBulkPreview([]);
+                        setBulkRows([]);
+                        setBulkError("");
+                        setBulkMessage("");
+                      }}
+                    />
+                  </label>
+                  <button className="button button--primary" type="button" onClick={validateBulkFile}>
+                    Validar archivo
+                  </button>
+                  <button className="button button--primary" type="button" onClick={importBulkRows} disabled={!validPreviewRows.length}>
+                    <CheckCircle2 size={16} />
+                    Importar filas válidas
+                  </button>
+                </div>
+
+                <div className="bulk-import-file">
+                  <strong>Archivo:</strong>
+                  <span>{bulkFile?.name || "Ningún archivo seleccionado"}</span>
+                </div>
+
+                {bulkError ? <p className="form-error">{bulkError}</p> : null}
+                {bulkMessage ? <p className="form-success">{bulkMessage}</p> : null}
+
+                {bulkPreview.length ? (
+                  <div className="bulk-import-summary">
+                    <span>Filas leídas: {bulkRows.length}</span>
+                    <span>Válidas: {validPreviewRows.length}</span>
+                    <span>Con errores: {invalidPreviewRows.length}</span>
+                  </div>
+                ) : null}
+
+                {bulkPreview.length ? (
+                  <div className="table-wrap bulk-import-preview">
+                    <table className="product-movement-table">
+                      <thead>
+                        <tr>
+                          <th>Fila</th>
+                          <th>Código empleado</th>
+                          <th>Nombre completo</th>
+                          <th>Área</th>
+                          <th>Cargo</th>
+                          <th>Turno</th>
+                          <th>Fecha ingreso</th>
+                          <th>Estado</th>
+                          <th>Encargado detectado</th>
+                          <th>Plantilla KPI detectada</th>
+                          <th>Resultado validación</th>
+                          <th>Errores</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {bulkPreview.map((row) => (
+                          <tr key={`${row.rowNumber}-${row.codigoEmpleado}`} className={row.valid ? "bulk-row-valid" : "bulk-row-error"}>
+                            <td>{row.rowNumber}</td>
+                            <td>{row.codigoEmpleado}</td>
+                            <td>{row.nombre}</td>
+                            <td>{row.areaNombre || row.area}</td>
+                            <td>{row.cargo}</td>
+                            <td>{row.turno}</td>
+                            <td>{row.fechaIngreso}</td>
+                            <td>{row.estado}</td>
+                            <td>{row.encargadoNombre || "No detectado"}</td>
+                            <td>{row.plantillaKpiDetectada || "No detectada"}</td>
+                            <td>{row.valid ? "Válida" : "Con errores"}</td>
+                            <td>{row.errors.join(" ")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+
+                <footer className="modal__footer">
+                  <button className="button button--ghost" type="button" onClick={() => setBulkOpen(false)}>
+                    <ArrowLeft size={16} />
+                    Volver
+                  </button>
+                </footer>
+              </>
+            )}
+          </section>
+        </Modal>
+      ) : null}
+    </>
   );
 }

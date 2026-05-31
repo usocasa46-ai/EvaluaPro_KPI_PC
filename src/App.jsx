@@ -6,6 +6,7 @@ import { initialKpiAreaTemplates } from "./data/kpiAreaTemplates";
 import { initialData } from "./data/initialData";
 import Areas from "./pages/Areas";
 import Amonestaciones from "./pages/Amonestaciones";
+import AnalisisMovimientoProductos from "./pages/AnalisisMovimientoProductos";
 import Colaboradores from "./pages/Colaboradores";
 import Configuracion from "./pages/Configuracion";
 import Dashboard from "./pages/Dashboard";
@@ -737,6 +738,7 @@ export default function App() {
             areas={visibleAreas}
             encargados={visibleEncargados}
             kpiTemplates={visibleKpiAreaTemplates}
+            activeUser={activeUser}
             canCreate={canManageCatalogs}
             canEdit={canManageCatalogs}
             onSave={upsertColaborador}
@@ -828,6 +830,8 @@ export default function App() {
             onSaveRecord={upsertKpiDailyRecord}
           />
         );
+      case "analisisMovimientoProductos":
+        return <AnalisisMovimientoProductos activeUser={activeUser} />;
       case "trasladosPendientes":
         return <TrasladosPendientes activeUser={activeUser} onBack={() => setView("dashboard")} />;
       case "vacaciones":
