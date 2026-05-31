@@ -52,10 +52,12 @@ const SUMMARY_CARDS = [
   ["totalCodes", "Total códigos analizados"],
   ["saldoInicialTotal", "Saldo inicial total"],
   ["entradasEP", "Total entradas EP"],
+  ["entradasEM", "Entradas manuales EM"],
   ["ventasRF", "Total vendido RF"],
   ["salidasSM", "Total salidas SM"],
   ["totalAjustePA", "Total ajustes PA"],
   ["totalNotaCreditoNE", "Total notas crédito NE"],
+  ["anulacionesDM", "Anulaciones de entrada DM"],
   ["existenciaCalculada", "Existencia calculada"],
   ["saldoFinalRealSistema", "Saldo final real del sistema"],
   ["diferencia", "Diferencia"],
@@ -84,14 +86,16 @@ const EMPTY_ANALYSIS = {
 const MOVEMENT_OPTIONS = [
   { value: "", label: "Todos" },
   { value: "EP", label: "EP - Entrada" },
+  { value: "EM", label: "EM - Entrada manual" },
   { value: "RF", label: "RF - Venta" },
   { value: "SM", label: "SM - Salida" },
   { value: "PA", label: "PA - Ajuste" },
   { value: "NE", label: "NE - Nota crédito" },
+  { value: "DM", label: "DM - Anulación de entrada" },
   { value: "DESCONOCIDO", label: "No reconocidos" },
 ];
 
-const CHART_COLORS = ["#0f66ff", "#0ea5e9", "#f5b942", "#22c55e", "#ef4444"];
+const CHART_COLORS = ["#0f66ff", "#38bdf8", "#0ea5e9", "#f5b942", "#22c55e", "#ef4444", "#8b5cf6"];
 
 function formatNumber(value) {
   const number = Number(value || 0);
@@ -104,7 +108,7 @@ function safeText(value) {
 }
 
 function movementLabel(row) {
-  if (row?.isInitialBalance || row?.movementType === "SALDO_INICIAL") return "Saldo inicial";
+  if (row?.isInitialBalance || row?.movementType === "SALDO_INICIAL") return "Stock actual según sistema";
   if (row?.movementType) return row.movementType;
   return row?.movementRaw || "-";
 }
@@ -480,7 +484,7 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
             <section className="content-panel product-movement-balance">
               <div>
                 <strong>Saldo inicial detectado</strong>
-                <span>{formatNumber(analysis.initialBalanceRows.length)} línea(s) separada(s) del cálculo EP/RF/SM/PA/NE.</span>
+                <span>{formatNumber(analysis.initialBalanceRows.length)} línea(s) separada(s) del cálculo EP/EM/RF/SM/PA/NE/DM.</span>
               </div>
               <div>
                 <strong>Existencia calculada</strong>
@@ -506,7 +510,7 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
               <div className="panel-heading">
                 <div>
                   <h2>Movimiento por tipo</h2>
-                  <p>Impacto total por EP, RF, SM, PA y NE.</p>
+                  <p>Impacto total por EP, EM, RF, SM, PA, NE y DM.</p>
                 </div>
               </div>
               {analysis.charts.movementTypeData.some((item) => item.impacto !== 0) ? (
@@ -579,7 +583,7 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
               <div className="panel-heading">
                 <div>
                   <h2>Top productos</h2>
-                  <p>Mayor venta o salida en el análisis filtrado.</p>
+                  <p>Mayor impacto de movimientos en el análisis filtrado.</p>
                 </div>
               </div>
               {analysis.charts.topProducts.length ? (
@@ -628,12 +632,14 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
                     <th>Almacén</th>
                     <th>Saldo inicial</th>
                     <th>Entradas EP</th>
+                    <th>Entradas manuales EM</th>
                     <th>Ventas RF</th>
                     <th>Salidas SM</th>
                     <th>PA positivo</th>
                     <th>PA negativo</th>
                     <th>NE positivo</th>
                     <th>NE negativo</th>
+                    <th>Anulación entrada DM</th>
                     <th>Existencia calculada</th>
                     <th>Saldo final real del sistema</th>
                     <th>Diferencia</th>
@@ -649,12 +655,14 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
                       <td>{safeText(product.warehouse)}</td>
                       <td>{formatNumber(product.saldoInicial)}</td>
                       <td>{formatNumber(product.entradasEP)}</td>
+                      <td>{formatNumber(product.entradasEM)}</td>
                       <td>{formatNumber(product.ventasRF)}</td>
                       <td>{formatNumber(product.salidasSM)}</td>
                       <td>{formatNumber(product.ajustePAPositivo)}</td>
                       <td>{formatNumber(product.ajustePANegativo)}</td>
                       <td>{formatNumber(product.notaCreditoNEPositiva)}</td>
                       <td>{formatNumber(product.notaCreditoNENegativa)}</td>
+                      <td>{formatNumber(product.anulacionesDM)}</td>
                       <td>{formatNumber(product.existenciaCalculada)}</td>
                       <td>{formatNumber(product.saldoFinalRealSistema)}</td>
                       <td>{formatNumber(product.diferencia)}</td>
@@ -669,7 +677,7 @@ export default function AnalisisMovimientoProductos({ activeUser }) {
                   ))}
                   {!analysis.products.length ? (
                     <tr>
-                      <td colSpan={16}>No hay datos para mostrar con los filtros actuales.</td>
+                      <td colSpan={18}>No hay datos para mostrar con los filtros actuales.</td>
                     </tr>
                   ) : null}
                 </tbody>

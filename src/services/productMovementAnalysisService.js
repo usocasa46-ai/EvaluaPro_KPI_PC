@@ -11,13 +11,16 @@ const REQUIRED_COLUMNS = [
 ];
 
 const SHEET_DETECTION_COLUMNS = ["code", "document", "quantity"];
-const KNOWN_DOCUMENT_PREFIXES = new Set(["EP", "RF", "SM", "PA", "NE"]);
+const MOVEMENT_TYPES = ["EP", "EM", "RF", "SM", "PA", "NE", "DM"];
+const KNOWN_DOCUMENT_PREFIXES = new Set(MOVEMENT_TYPES);
 const MOVEMENT_LABELS = {
   EP: "Entrada de mercancía",
+  EM: "Entrada manual",
   RF: "Venta",
   SM: "Salida de mercancía",
   PA: "Ajuste de inventario",
   NE: "Nota de crédito",
+  DM: "Anulación de entrada",
 };
 
 const COLUMN_ALIASES = {
@@ -219,10 +222,12 @@ export function findMovementSheet(workbook) {
 export function normalizeMovementType(value) {
   const compact = compactText(value);
   if (compact.startsWith("ep")) return "EP";
+  if (compact.startsWith("em")) return "EM";
   if (compact.startsWith("rf")) return "RF";
   if (compact.startsWith("sm")) return "SM";
   if (compact.startsWith("pa")) return "PA";
   if (compact.startsWith("ne")) return "NE";
+  if (compact.startsWith("dm")) return "DM";
   return "";
 }
 
@@ -342,7 +347,7 @@ export async function parseProductMovementExcel(file) {
         warehouse: String(cellValue(row, columnMap, "warehouse") ?? "").trim(),
         movementRaw: document,
         movementType,
-        movementLabel: movementType ? MOVEMENT_LABELS[movementType] || "Saldo inicial" : "",
+        movementLabel: movementType ? MOVEMENT_LABELS[movementType] || "Stock actual según sistema" : "",
         documentNumber: extractDocumentNumber(document),
         isInitialBalance,
         quantity,
@@ -393,10 +398,12 @@ function isKnownMovement(row) {
 export function calculateMovementDelta(row) {
   const quantity = normalizeNumber(row?.quantity);
   if (row?.movementType === "EP") return quantity;
+  if (row?.movementType === "EM") return quantity;
   if (row?.movementType === "RF") return quantity < 0 ? quantity : -Math.abs(quantity);
   if (row?.movementType === "SM") return quantity < 0 ? quantity : -Math.abs(quantity);
   if (row?.movementType === "PA") return quantity;
   if (row?.movementType === "NE") return quantity;
+  if (row?.movementType === "DM") return quantity;
   return 0;
 }
 
@@ -553,6 +560,7 @@ function roundSummary(summary) {
   return {
     ...summary,
     entradasEP: round(summary.entradasEP),
+    entradasEM: round(summary.entradasEM),
     ventasRF: round(summary.ventasRF),
     salidasSM: round(summary.salidasSM),
     ajustePAPositivo: round(summary.ajustePAPositivo),
@@ -561,6 +569,16 @@ function roundSummary(summary) {
     notaCreditoNEPositiva: round(summary.notaCreditoNEPositiva),
     notaCreditoNENegativa: round(summary.notaCreditoNENegativa),
     totalNotaCreditoNE: round(summary.totalNotaCreditoNE),
+    anulacionesDM: round(summary.anulacionesDM),
+    sumaDeltaEP: round(summary.sumaDeltaEP),
+    sumaDeltaEM: round(summary.sumaDeltaEM),
+    sumaDeltaRF: round(summary.sumaDeltaRF),
+    sumaDeltaSM: round(summary.sumaDeltaSM),
+    sumaDeltaPA: round(summary.sumaDeltaPA),
+    sumaDeltaNE: round(summary.sumaDeltaNE),
+    sumaDeltaDM: round(summary.sumaDeltaDM),
+    existenciaCalculadaPorMovimientos: round(summary.existenciaCalculadaPorMovimientos),
+    deltaMovimientos: round(summary.deltaMovimientos),
     saldoInicial: round(summary.saldoInicial),
     existenciaCalculada: round(summary.existenciaCalculada),
     saldoFinalRealSistema: round(summary.saldoFinalRealSistema),
@@ -581,10 +599,16 @@ export function calculateProductMovementSummary(productRows = [], allProductRows
   const summary = movementRows.reduce(
     (current, row) => {
       const quantity = normalizeNumber(row.quantity);
-      current.deltaMovimientos += calculateMovementDelta(row);
+      const delta = calculateMovementDelta(row);
+      current.deltaMovimientos += delta;
+      const deltaKey = `sumaDelta${row.movementType}`;
+      if (deltaKey in current) current[deltaKey] += delta;
 
       if (row.movementType === "EP") {
         current.entradasEP += quantity;
+      } else if (row.movementType === "EM") {
+        current.entradasEM += quantity;
+        current.entradasEMCount += 1;
       } else if (row.movementType === "RF") {
         current.ventasRF += Math.abs(quantity);
       } else if (row.movementType === "SM") {
@@ -595,6 +619,9 @@ export function calculateProductMovementSummary(productRows = [], allProductRows
       } else if (row.movementType === "NE") {
         if (quantity >= 0) current.notaCreditoNEPositiva += quantity;
         else current.notaCreditoNENegativa += quantity;
+      } else if (row.movementType === "DM") {
+        current.anulacionesDM += quantity;
+        current.anulacionesDMCount += 1;
       }
 
       return current;
@@ -605,6 +632,8 @@ export function calculateProductMovementSummary(productRows = [], allProductRows
       description,
       warehouse: warehouseValues.join(", "),
       entradasEP: 0,
+      entradasEM: 0,
+      entradasEMCount: 0,
       ventasRF: 0,
       salidasSM: 0,
       ajustePAPositivo: 0,
@@ -613,10 +642,20 @@ export function calculateProductMovementSummary(productRows = [], allProductRows
       notaCreditoNENegativa: 0,
       totalAjustePA: 0,
       totalNotaCreditoNE: 0,
+      anulacionesDM: 0,
+      anulacionesDMCount: 0,
       saldoInicial: initialBalance.value,
       hasInitialBalance: initialBalance.hasBalance,
       initialBalanceSource: initialBalance.source,
+      sumaDeltaEP: 0,
+      sumaDeltaEM: 0,
+      sumaDeltaRF: 0,
+      sumaDeltaSM: 0,
+      sumaDeltaPA: 0,
+      sumaDeltaNE: 0,
+      sumaDeltaDM: 0,
       deltaMovimientos: 0,
+      existenciaCalculadaPorMovimientos: 0,
       existenciaCalculada: 0,
       saldoFinalRealSistema: realFinalBalance.value,
       hasRealFinalBalance: realFinalBalance.hasBalance,
@@ -631,7 +670,16 @@ export function calculateProductMovementSummary(productRows = [], allProductRows
 
   summary.totalAjustePA = summary.ajustePAPositivo + summary.ajustePANegativo;
   summary.totalNotaCreditoNE = summary.notaCreditoNEPositiva + summary.notaCreditoNENegativa;
-  summary.existenciaCalculada = summary.saldoInicial + summary.deltaMovimientos;
+  summary.existenciaCalculadaPorMovimientos =
+    summary.sumaDeltaEP +
+    summary.sumaDeltaEM +
+    summary.sumaDeltaRF +
+    summary.sumaDeltaSM +
+    summary.sumaDeltaPA +
+    summary.sumaDeltaNE +
+    summary.sumaDeltaDM;
+  summary.deltaMovimientos = summary.existenciaCalculadaPorMovimientos;
+  summary.existenciaCalculada = summary.saldoInicial + summary.existenciaCalculadaPorMovimientos;
   summary.diferencia = summary.hasRealFinalBalance ? summary.saldoFinalRealSistema - summary.existenciaCalculada : 0;
 
   return roundSummary(summary);
@@ -656,6 +704,7 @@ export function buildGeneralSummary(rows = [], products = []) {
       totalCodes: current.totalCodes + 1,
       saldoInicialTotal: current.saldoInicialTotal + product.saldoInicial,
       entradasEP: current.entradasEP + product.entradasEP,
+      entradasEM: current.entradasEM + product.entradasEM,
       ventasRF: current.ventasRF + product.ventasRF,
       salidasSM: current.salidasSM + product.salidasSM,
       ajustePAPositivo: current.ajustePAPositivo + product.ajustePAPositivo,
@@ -664,6 +713,17 @@ export function buildGeneralSummary(rows = [], products = []) {
       notaCreditoNEPositiva: current.notaCreditoNEPositiva + product.notaCreditoNEPositiva,
       notaCreditoNENegativa: current.notaCreditoNENegativa + product.notaCreditoNENegativa,
       totalNotaCreditoNE: current.totalNotaCreditoNE + product.totalNotaCreditoNE,
+      anulacionesDM: current.anulacionesDM + product.anulacionesDM,
+      sumaDeltaEP: current.sumaDeltaEP + product.sumaDeltaEP,
+      sumaDeltaEM: current.sumaDeltaEM + product.sumaDeltaEM,
+      sumaDeltaRF: current.sumaDeltaRF + product.sumaDeltaRF,
+      sumaDeltaSM: current.sumaDeltaSM + product.sumaDeltaSM,
+      sumaDeltaPA: current.sumaDeltaPA + product.sumaDeltaPA,
+      sumaDeltaNE: current.sumaDeltaNE + product.sumaDeltaNE,
+      sumaDeltaDM: current.sumaDeltaDM + product.sumaDeltaDM,
+      existenciaCalculadaPorMovimientos:
+        current.existenciaCalculadaPorMovimientos + product.existenciaCalculadaPorMovimientos,
+      deltaMovimientos: current.deltaMovimientos + product.deltaMovimientos,
       existenciaCalculada: current.existenciaCalculada + product.existenciaCalculada,
       saldoFinalRealSistema: current.saldoFinalRealSistema + product.saldoFinalRealSistema,
       diferencia: current.diferencia + product.diferencia,
@@ -675,6 +735,7 @@ export function buildGeneralSummary(rows = [], products = []) {
       totalCodes: 0,
       saldoInicialTotal: 0,
       entradasEP: 0,
+      entradasEM: 0,
       ventasRF: 0,
       salidasSM: 0,
       ajustePAPositivo: 0,
@@ -683,6 +744,16 @@ export function buildGeneralSummary(rows = [], products = []) {
       notaCreditoNEPositiva: 0,
       notaCreditoNENegativa: 0,
       totalNotaCreditoNE: 0,
+      anulacionesDM: 0,
+      sumaDeltaEP: 0,
+      sumaDeltaEM: 0,
+      sumaDeltaRF: 0,
+      sumaDeltaSM: 0,
+      sumaDeltaPA: 0,
+      sumaDeltaNE: 0,
+      sumaDeltaDM: 0,
+      existenciaCalculadaPorMovimientos: 0,
+      deltaMovimientos: 0,
       existenciaCalculada: 0,
       saldoFinalRealSistema: 0,
       diferencia: 0,
@@ -698,7 +769,7 @@ export function buildGeneralSummary(rows = [], products = []) {
 
 export function buildMovementChartsData(rows = [], products = []) {
   const validRows = rows.filter(isKnownMovement);
-  const movementTypeData = ["EP", "RF", "SM", "PA", "NE"].map((type) => {
+  const movementTypeData = MOVEMENT_TYPES.map((type) => {
     const typeRows = validRows.filter((row) => row.movementType === type);
     return {
       type,
@@ -747,10 +818,12 @@ export function buildMovementChartsData(rows = [], products = []) {
       salidasSM: product.salidasSM,
       impacto: round(
         Math.abs(product.entradasEP) +
+          Math.abs(product.entradasEM) +
           product.ventasRF +
           product.salidasSM +
           Math.abs(product.totalAjustePA) +
-          Math.abs(product.totalNotaCreditoNE)
+          Math.abs(product.totalNotaCreditoNE) +
+          Math.abs(product.anulacionesDM)
       ),
     }))
     .sort((left, right) => right.impacto - left.impacto)
@@ -767,10 +840,12 @@ export function buildMovementChartsData(rows = [], products = []) {
 function movementImpactLabel(product) {
   const impacts = [
     ["EP", Math.abs(product.entradasEP)],
+    ["EM", Math.abs(product.entradasEM)],
     ["RF", product.ventasRF],
     ["SM", product.salidasSM],
     ["PA", Math.abs(product.totalAjustePA)],
     ["NE", Math.abs(product.totalNotaCreditoNE)],
+    ["DM", Math.abs(product.anulacionesDM)],
   ];
   impacts.sort((left, right) => right[1] - left[1]);
   return impacts[0]?.[1] > 0 ? impacts[0][0] : "";
@@ -784,9 +859,17 @@ export function buildProductConclusion(productSummary, filters = {}) {
     filters.dateExact || filters.dateFrom || filters.dateTo ? "en el periodo filtrado" : "en el archivo analizado";
   const impact = movementImpactLabel(productSummary);
   const lines = [
-    `El producto ${productName} tuvo ${round(productSummary.entradasEP)} unidades de entrada y ${round(productSummary.ventasRF)} unidades vendidas ${period}.`,
+    `El producto ${productName} tuvo ${round(productSummary.entradasEP)} unidades de entrada EP, ${round(productSummary.entradasEM)} unidades EM y ${round(productSummary.ventasRF)} unidades vendidas ${period}.`,
     `Saldo inicial considerado: ${round(productSummary.saldoInicial)}. Existencia calculada: ${round(productSummary.existenciaCalculada)}.`,
   ];
+
+  if (productSummary.entradasEMCount > 0) {
+    lines.push(`Registró ${productSummary.entradasEMCount} movimiento(s) EM con delta neto de ${round(productSummary.entradasEM)}.`);
+  }
+
+  if (productSummary.anulacionesDMCount > 0) {
+    lines.push(`Registró ${productSummary.anulacionesDMCount} anulación(es) DM con delta neto de ${round(productSummary.anulacionesDM)}.`);
+  }
 
   if (productSummary.hasRealFinalBalance) {
     lines.push(
@@ -838,12 +921,14 @@ export function exportMovementAnalysisToCsv(products = []) {
     "Almacén",
     "Saldo inicial",
     "Entradas EP",
+    "Entradas manuales EM",
     "Ventas RF",
     "Salidas SM",
     "PA positivo",
     "PA negativo",
     "NE positivo",
     "NE negativo",
+    "Anulación entrada DM",
     "Existencia calculada",
     "Saldo final real del sistema",
     "Diferencia",
@@ -856,12 +941,14 @@ export function exportMovementAnalysisToCsv(products = []) {
       product.warehouse,
       product.saldoInicial,
       product.entradasEP,
+      product.entradasEM,
       product.ventasRF,
       product.salidasSM,
       product.ajustePAPositivo,
       product.ajustePANegativo,
       product.notaCreditoNEPositiva,
       product.notaCreditoNENegativa,
+      product.anulacionesDM,
       product.existenciaCalculada,
       product.saldoFinalRealSistema,
       product.diferencia,
@@ -879,10 +966,12 @@ export function exportMovementAnalysisToExcel(report, analysis, selectedProduct 
     { Indicador: "Total códigos analizados", Valor: analysis.totals.totalCodes },
     { Indicador: "Saldo inicial total", Valor: analysis.totals.saldoInicialTotal },
     { Indicador: "Total entradas EP", Valor: analysis.totals.entradasEP },
+    { Indicador: "Entradas manuales EM", Valor: analysis.totals.entradasEM },
     { Indicador: "Total vendido RF", Valor: analysis.totals.ventasRF },
     { Indicador: "Total salidas SM", Valor: analysis.totals.salidasSM },
     { Indicador: "Total ajustes PA", Valor: analysis.totals.totalAjustePA },
     { Indicador: "Total notas crédito NE", Valor: analysis.totals.totalNotaCreditoNE },
+    { Indicador: "Anulaciones de entrada DM", Valor: analysis.totals.anulacionesDM },
     { Indicador: "Existencia calculada", Valor: analysis.totals.existenciaCalculada },
     { Indicador: "Saldo final real del sistema", Valor: analysis.totals.saldoFinalRealSistema },
     { Indicador: "Diferencia", Valor: analysis.totals.diferencia },
@@ -894,12 +983,14 @@ export function exportMovementAnalysisToExcel(report, analysis, selectedProduct 
     Almacén: product.warehouse,
     "Saldo inicial": product.saldoInicial,
     "Entradas EP": product.entradasEP,
+    "Entradas manuales EM": product.entradasEM,
     "Ventas RF": product.ventasRF,
     "Salidas SM": product.salidasSM,
     "PA positivo": product.ajustePAPositivo,
     "PA negativo": product.ajustePANegativo,
     "NE positivo": product.notaCreditoNEPositiva,
     "NE negativo": product.notaCreditoNENegativa,
+    "Anulación entrada DM": product.anulacionesDM,
     "Existencia calculada": product.existenciaCalculada,
     "Saldo final real del sistema": product.saldoFinalRealSistema,
     Diferencia: product.diferencia,
