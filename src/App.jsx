@@ -24,6 +24,7 @@ import Permisos from "./pages/Permisos";
 import PlantillasKpiArea from "./pages/PlantillasKpiArea";
 import Reportes from "./pages/Reportes";
 import Subgerentes from "./pages/Subgerentes";
+import SuperadminPanel from "./pages/SuperadminPanel";
 import TrasladosPendientes from "./pages/TrasladosPendientes";
 import UsuariosRoles from "./pages/UsuariosRoles";
 import Vacaciones from "./pages/Vacaciones";
@@ -63,11 +64,13 @@ import {
   getQuarterlyScopeAreas,
   getQuarterlyEvaluationTargetType,
   getVisibleModules,
+  isSuperadmin,
 } from "./services/permissionsService";
 import { normalizeMonthlyEvaluation, normalizeTemplate } from "./services/kpiMonthlyService";
 import { normalizeDailyKpiRecord } from "./services/dailyKpiService";
 import { normalizeQuarterlyEvaluation } from "./services/quarterlyEvaluationService";
 import { normalizeConfig } from "./services/configService";
+import { ensureDefaultCompanies, normalizeCompany } from "./services/companyService";
 import {
   normalizePermitRecord,
   normalizeVacationRecord,
@@ -80,6 +83,7 @@ import {
   resetOperationalDataKeepUsers,
   useLocalStorage,
 } from "./services/storageService";
+import { ensureDefaultSuperadmin } from "./services/superadminService";
 
 function mergeConfig(configuracion) {
   return normalizeConfig(configuracion);
@@ -224,7 +228,11 @@ export default function App() {
     initialData.evaluacionesEncargado
   );
   const [gerentes, setGerentes] = useLocalStorage(STORAGE_KEYS.gerentes, initialData.gerentes);
-  const [usuarios, setUsuarios] = useLocalStorage(STORAGE_KEYS.usuarios, initialData.usuarios);
+  const [usuarios, setUsuarios] = useLocalStorage(STORAGE_KEYS.usuarios, ensureDefaultSuperadmin(initialData.usuarios));
+  const [companies, setCompanies] = useLocalStorage(
+    STORAGE_KEYS.companies,
+    ensureDefaultCompanies([], initialData.configuracion)
+  );
   const [configuracion, setConfiguracion] = useLocalStorage(STORAGE_KEYS.configuracion, initialData.configuracion);
   const [activeSession, setActiveSession] = useLocalStorage(STORAGE_KEYS.activeUserId, null);
   const [quarterlyStartSignal, setQuarterlyStartSignal] = useState(0);
@@ -270,9 +278,10 @@ export default function App() {
     setAreas((current) => mergeMissingById(current, initialData.areas));
     setEncargados((current) => mergeMissingById(current, initialData.encargados));
     setColaboradores((current) => mergeMissingById(current, initialData.colaboradores));
-    setUsuarios((current) => mergeMissingUsers(current, initialData.usuarios));
+    setUsuarios((current) => ensureDefaultSuperadmin(mergeMissingUsers(current, initialData.usuarios)));
+    setCompanies((current) => ensureDefaultCompanies(current, initialData.configuracion));
     setKpiAreaTemplates((current) => mergeMissingTemplates(current, initialKpiAreaTemplates));
-  }, [setAreas, setColaboradores, setEncargados, setKpiAreaTemplates, setUsuarios]);
+  }, [setAreas, setColaboradores, setCompanies, setEncargados, setKpiAreaTemplates, setUsuarios]);
 
   const evaluationsKpi = useMemo(() => withCollaboratorKpi(evaluaciones), [evaluaciones]);
   const subgerenteEvaluationsKpi = useMemo(() => withSubgerenteKpi(evaluacionesSubgerente), [evaluacionesSubgerente]);
@@ -359,7 +368,10 @@ export default function App() {
     [activeUser, gerentes]
   );
   const visibleUsuarios = useMemo(
-    () => (canAccessModule(activeUser, "usuarios-roles") ? usuarios : []),
+    () => {
+      if (!canAccessModule(activeUser, "usuarios-roles")) return [];
+      return isSuperadmin(activeUser) ? usuarios : usuarios.filter((user) => !isSuperadmin(user));
+    },
     [activeUser, usuarios]
   );
   const quarterlyScopeAreas = useMemo(
@@ -509,7 +521,7 @@ export default function App() {
     }
 
     setActiveSession({ id: user.id, usuario: user.usuario, loggedAt: new Date().toISOString() });
-    setView("dashboard");
+    setView(isSuperadmin(user) ? "superadminPanel" : "dashboard");
     return { ok: true };
   }
 
@@ -521,6 +533,11 @@ export default function App() {
   function upsertUser(record) {
     const normalized = normalizeUser(record);
     const saved = { ...normalized, id: normalized.id || createId("USR") };
+
+    if (isSuperadmin(saved) && !isSuperadmin(activeUser)) {
+      window.alert("Solo el Superadmin puede crear o editar usuarios Superadmin.");
+      return null;
+    }
 
     setUsuarios((current) => {
       const exists = current.some((user) => user.id === saved.id);
@@ -562,11 +579,53 @@ export default function App() {
   }
 
   function toggleUserStatus(id) {
+    const targetUser = usuarios.find((user) => user.id === id);
+    if (isSuperadmin(targetUser) && !isSuperadmin(activeUser)) {
+      window.alert("Solo el Superadmin puede activar o inactivar usuarios Superadmin.");
+      return;
+    }
+
     setUsuarios((current) =>
       current.map((user) =>
         user.id === id ? { ...user, estado: user.estado === "Inactivo" ? "Activo" : "Inactivo" } : user
       )
     );
+  }
+
+  function upsertCompany(record) {
+    if (!isSuperadmin(activeUser)) {
+      window.alert("Solo el Superadmin puede administrar empresas.");
+      return null;
+    }
+
+    const saved = normalizeCompany({
+      ...record,
+      id: record.id || createId("EMP"),
+      createdById: record.createdById || activeUser?.id || "",
+      createdByName: record.createdByName || activeUser?.nombre || "",
+      updatedAt: new Date().toISOString(),
+    });
+
+    setCompanies((current) => upsertListItem(current, "EMP", saved));
+    return saved;
+  }
+
+  function changeUserPassword(userId, password) {
+    if (!isSuperadmin(activeUser)) {
+      window.alert("Solo el Superadmin puede cambiar contraseñas desde este panel.");
+      return false;
+    }
+
+    const nextPassword = String(password || "").trim();
+    if (!nextPassword) return false;
+
+    setUsuarios((current) =>
+      current.map((user) =>
+        user.id === userId ? { ...user, password: nextPassword, updatedAt: new Date().toISOString() } : user
+      )
+    );
+
+    return true;
   }
 
   function confirmOperationalReset() {
@@ -706,6 +765,41 @@ export default function App() {
     const effectiveView = canAccessModule(activeUser, view) ? view : "dashboard";
 
     switch (effectiveView) {
+      case "superadminPanel":
+        return (
+          <SuperadminPanel
+            activeUser={activeUser}
+            onNavigate={setView}
+            companies={companies}
+            usuarios={usuarios}
+            colaboradores={colaboradores}
+            areas={areas}
+            kpiTemplates={normalizedKpiAreaTemplates}
+            monthlyEvaluations={normalizedKpiMonthlyEvaluations}
+            quarterlyEvaluations={normalizedEvaluacionesTrimestrales}
+            configuracion={safeConfig}
+            onSaveCompany={upsertCompany}
+            onChangeUserPassword={changeUserPassword}
+          />
+        );
+      case "empresasSucursales":
+        return (
+          <SuperadminPanel
+            activeUser={activeUser}
+            onNavigate={setView}
+            companies={companies}
+            usuarios={usuarios}
+            colaboradores={colaboradores}
+            areas={areas}
+            kpiTemplates={normalizedKpiAreaTemplates}
+            monthlyEvaluations={normalizedKpiMonthlyEvaluations}
+            quarterlyEvaluations={normalizedEvaluacionesTrimestrales}
+            configuracion={safeConfig}
+            onSaveCompany={upsertCompany}
+            onChangeUserPassword={changeUserPassword}
+            focusSection="companies"
+          />
+        );
       case "areas":
         return (
           <Areas
@@ -894,7 +988,7 @@ export default function App() {
         return (
           <Gerentes
             gerentes={visibleGerentes}
-            canCreate={activeUser?.rol === ROLES.GERENTE}
+            canCreate={canManageCatalogs}
             onCreate={(record) => addRecord(setGerentes, "GER", record)}
           />
         );

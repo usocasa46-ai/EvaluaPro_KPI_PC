@@ -3,7 +3,7 @@ import { Edit3, Plus, Power, RotateCcw } from "lucide-react";
 import DataTable from "../components/DataTable";
 import FormField from "../components/FormField";
 import Modal from "../components/Modal";
-import { canAccessUserManagement, getPermissionMessage } from "../services/permissionsService";
+import { canAccessUserManagement, getPermissionMessage, isSuperadmin } from "../services/permissionsService";
 
 const initialForm = {
   nombre: "",
@@ -46,6 +46,9 @@ export default function UsuariosRoles({
   const [form, setForm] = useState(initialForm);
   const [error, setError] = useState("");
   const canView = canAccessUserManagement(activeUser);
+  const roleOptions = isSuperadmin(activeUser)
+    ? ["Superadmin", "Gerente", "Subgerente", "Encargado"]
+    : ["Gerente", "Subgerente", "Encargado"];
 
   if (!canView) {
     return (
@@ -81,6 +84,10 @@ export default function UsuariosRoles({
     event.preventDefault();
     if (!form.nombre || !form.usuario || !form.password || !form.rol) {
       setError("Nombre, usuario, contraseña y rol son obligatorios.");
+      return;
+    }
+    if (isSuperadmin(form) && !isSuperadmin(activeUser)) {
+      setError("Solo el Superadmin puede crear o editar usuarios Superadmin.");
       return;
     }
     if (form.rol === "Encargado" && !form.areaAsignada) {
@@ -161,7 +168,7 @@ export default function UsuariosRoles({
                 onChange={updateForm}
               />
               <FormField
-                field={{ name: "rol", label: "Rol", type: "select", required: true, options: ["Gerente", "Subgerente", "Encargado"] }}
+                field={{ name: "rol", label: "Rol", type: "select", required: true, options: roleOptions }}
                 value={form.rol}
                 onChange={updateForm}
               />

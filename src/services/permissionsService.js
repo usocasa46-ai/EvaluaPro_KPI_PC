@@ -1,10 +1,13 @@
 export const ROLES = {
+  SUPERADMIN: "Superadmin",
   GERENTE: "Gerente",
   SUBGERENTE: "Subgerente",
   ENCARGADO: "Encargado",
 };
 
 export const MODULES = [
+  { id: "superadminPanel", label: "Panel Superadmin" },
+  { id: "empresasSucursales", label: "Empresas / Sucursales" },
   { id: "dashboard", label: "Dashboard" },
   { id: "areas", label: "Áreas" },
   { id: "colaboradores", label: "Colaboradores" },
@@ -28,6 +31,57 @@ export const MODULES = [
   { id: "reportes", label: "Reportes" },
   { id: "configuracion", label: "Configuración" },
 ];
+
+export function normalizeRoleName(role = "") {
+  return String(role || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+export function isSuperadmin(user) {
+  const role = typeof user === "string" ? user : user?.rol || user?.role;
+  const normalized = normalizeRoleName(role);
+  return normalized === "superadmin" || normalized === "super admin";
+}
+
+function isGerente(user) {
+  return user?.rol === ROLES.GERENTE;
+}
+
+export function canAccessAllModules(user) {
+  return isSuperadmin(user);
+}
+
+export function canManageSystemSettings(user) {
+  return isSuperadmin(user);
+}
+
+export function canManageRoles(user) {
+  return isSuperadmin(user);
+}
+
+export function canViewAllAreas(user) {
+  return isSuperadmin(user) || isGerente(user);
+}
+
+export function canViewAllReports(user) {
+  return isSuperadmin(user) || isGerente(user);
+}
+
+export function canManageModules(user) {
+  return isSuperadmin(user);
+}
+
+export function canViewAuditLog(user) {
+  return isSuperadmin(user);
+}
+
+export function canManageBackups(user) {
+  return isSuperadmin(user);
+}
 
 export function normalizeAreaName(area = "") {
   const normalized = String(area)
@@ -61,7 +115,7 @@ function includesArea(areas = [], area) {
 }
 
 export function getUserScopeAreas(user, subgerentes = []) {
-  if (!user || user.rol === ROLES.GERENTE) return [];
+  if (!user || canViewAllAreas(user)) return [];
 
   if (user.rol === ROLES.ENCARGADO) {
     return user.areaAsignada ? [user.areaAsignada] : [];
@@ -78,35 +132,35 @@ export function getUserScopeAreas(user, subgerentes = []) {
 }
 
 export function canViewAllData(user) {
-  return user?.rol === ROLES.GERENTE;
+  return isSuperadmin(user) || isGerente(user);
 }
 
 export function canViewAllEvaluations(user) {
-  return user?.rol === ROLES.GERENTE;
+  return isSuperadmin(user) || isGerente(user);
 }
 
 export function canAccessSettings(user) {
-  return user?.rol === ROLES.GERENTE;
+  return isSuperadmin(user) || isGerente(user);
 }
 
 export function canCreateUsers(user) {
-  return user?.rol === ROLES.GERENTE;
+  return isSuperadmin(user) || isGerente(user);
 }
 
 export function canEditMasterData(user) {
-  return user?.rol === ROLES.GERENTE;
+  return isSuperadmin(user) || isGerente(user);
 }
 
 export function canManageUsers(user) {
-  return user?.rol === ROLES.GERENTE;
+  return isSuperadmin(user) || isGerente(user);
 }
 
 export function canAccessUserManagement(user) {
-  return user?.rol === ROLES.GERENTE;
+  return isSuperadmin(user) || isGerente(user);
 }
 
 export function canCreateSubgerentes(user) {
-  return user?.rol === ROLES.GERENTE;
+  return isSuperadmin(user) || isGerente(user);
 }
 
 export function canEvaluateCollaborator(user) {
@@ -130,7 +184,7 @@ export function canCreateOperationalEvaluation(user) {
 }
 
 export function canViewKpiMonthly(user) {
-  return [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user?.rol);
+  return isSuperadmin(user) || [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user?.rol);
 }
 
 export function canEditKpiMonthly(user) {
@@ -138,7 +192,7 @@ export function canEditKpiMonthly(user) {
 }
 
 export function canAccessQuarterlyEvaluation(user) {
-  return [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user?.rol);
+  return isSuperadmin(user) || [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user?.rol);
 }
 
 export function canCreateQuarterlyEvaluation(user) {
@@ -253,7 +307,7 @@ export function getQuarterlyScopeAreas(user, subgerentes = []) {
 
 export function canViewQuarterlyEvaluation(user, evaluation, scopeAreas) {
   if (!canAccessQuarterlyEvaluation(user)) return false;
-  if (user.rol === ROLES.GERENTE) return true;
+  if (isSuperadmin(user) || user.rol === ROLES.GERENTE) return true;
 
   const evaluationArea = evaluation?.area;
   const areas = Array.isArray(scopeAreas) ? scopeAreas : getUserScopeAreas(user);
@@ -288,13 +342,13 @@ export function filterQuarterlyEvaluationsByUser(user, evaluations, subgerentes 
 
 export function canViewArea(user, area, subgerentes = []) {
   const areaName = area?.nombre || area?.area || area;
-  if (user?.rol === ROLES.GERENTE) return true;
+  if (canViewAllAreas(user)) return true;
   const scopeAreas = getUserScopeAreas(user, subgerentes);
   return includesArea(scopeAreas, areaName);
 }
 
 export function canViewCollaboratorEvaluation(user, evaluation, subgerentes = []) {
-  if (user?.rol === ROLES.GERENTE) return true;
+  if (canViewAllEvaluations(user)) return true;
 
   if (user?.rol === ROLES.SUBGERENTE) {
     return includesArea(getUserScopeAreas(user, subgerentes), evaluation?.area);
@@ -310,7 +364,7 @@ export function canViewCollaboratorEvaluation(user, evaluation, subgerentes = []
 }
 
 export function canViewManagerEvaluation(user, evaluation, subgerentes = []) {
-  if (user?.rol === ROLES.GERENTE) return true;
+  if (canViewAllEvaluations(user)) return true;
   if (user?.rol !== ROLES.SUBGERENTE) return false;
 
   const evaluatorMatches = evaluation?.evaluadorId === user.id || evaluation?.evaluadorNombre === user.nombre;
@@ -318,10 +372,11 @@ export function canViewManagerEvaluation(user, evaluation, subgerentes = []) {
 }
 
 export function canViewSubManagerEvaluation(user) {
-  return user?.rol === ROLES.GERENTE;
+  return canViewAllEvaluations(user);
 }
 
 export function canAccessTransferPendingModule(user) {
+  if (isSuperadmin(user)) return true;
   if (!user) return false;
   const receivingArea = "Recepción de Mercancía";
 
@@ -333,10 +388,11 @@ export function canAccessTransferPendingModule(user) {
 }
 
 export function canViewProductMovementAnalysis(user) {
-  return [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user?.rol);
+  return isSuperadmin(user) || [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user?.rol);
 }
 
 export function canImportProductMovementAnalysis(user) {
+  if (isSuperadmin(user)) return true;
   if (user?.rol === ROLES.GERENTE) return true;
   return Boolean(user?.rol === ROLES.ENCARGADO && sameArea(user.areaAsignada, "Recepción de Mercancía"));
 }
@@ -347,6 +403,8 @@ export function canPrintProductMovementAnalysis(user) {
 
 export function canAccessModule(user, moduleId) {
   if (!user) return false;
+  if (["superadminPanel", "empresasSucursales"].includes(moduleId)) return isSuperadmin(user);
+  if (isSuperadmin(user)) return true;
   if (moduleId === "trasladosPendientes") return canAccessTransferPendingModule(user);
   if (moduleId === "analisisMovimientoProductos") return canViewProductMovementAnalysis(user);
 
@@ -415,11 +473,11 @@ export function canAccessModule(user, moduleId) {
 }
 
 export function canAccessSystemConfig(user) {
-  return user ? [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user.rol) : false;
+  return user ? isSuperadmin(user) || [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user.rol) : false;
 }
 
 export function canEditSystemConfig(user) {
-  return user?.rol === ROLES.GERENTE;
+  return isSuperadmin(user) || user?.rol === ROLES.GERENTE;
 }
 
 export function isWithinEditWindow(createdAt, hours = 48) {
@@ -442,20 +500,20 @@ export function canEditEvaluation(user, evaluation) {
 }
 
 export function canViewCollaborator(user, collaborator, subgerentes = []) {
-  if (user?.rol === ROLES.GERENTE) return true;
+  if (canViewAllData(user)) return true;
   const areaName = collaborator?.areaNombre || collaborator?.area;
   return includesArea(getUserScopeAreas(user, subgerentes), areaName);
 }
 
 export function canViewMonthlyKpi(user, monthlyEvaluation, subgerentes = []) {
-  if (user?.rol === ROLES.GERENTE) return true;
+  if (canViewAllData(user)) return true;
   const areaName = monthlyEvaluation?.areaNombre || monthlyEvaluation?.area;
   return includesArea(getUserScopeAreas(user, subgerentes), areaName);
 }
 
 export function canViewDailyKpi(user, record, subgerentes = []) {
   if (!user || !record) return false;
-  if (user.rol === ROLES.GERENTE) return true;
+  if (canViewAllData(user)) return true;
   return includesArea(getUserScopeAreas(user, subgerentes), record.areaNombre || record.area);
 }
 
@@ -476,24 +534,24 @@ export function filterDailyKpiByUser(user, records = [], subgerentes = []) {
 
 export function filterRecordsByUserArea(user, records = [], subgerentes = []) {
   if (!Array.isArray(records)) return [];
-  if (user?.rol === ROLES.GERENTE) return records;
+  if (canViewAllData(user)) return records;
   const scopeAreas = getUserScopeAreas(user, subgerentes);
   return records.filter((record) => includesArea(scopeAreas, record?.areaNombre || record?.area));
 }
 
 function canViewHrRecord(user, record, subgerentes = []) {
   if (!user || !record) return false;
-  if (user.rol === ROLES.GERENTE) return true;
+  if (canViewAllData(user)) return true;
   return includesArea(getUserScopeAreas(user, subgerentes), record.areaNombre || record.area);
 }
 
 function canCreateHrRecord(user) {
-  return [ROLES.GERENTE, ROLES.ENCARGADO].includes(user?.rol);
+  return isSuperadmin(user) || [ROLES.GERENTE, ROLES.ENCARGADO].includes(user?.rol);
 }
 
 function canEditHrRecord(user, record, subgerentes = []) {
   if (!user || !record) return false;
-  if (user.rol === ROLES.GERENTE) return true;
+  if (isSuperadmin(user) || user.rol === ROLES.GERENTE) return true;
   if (user.rol === ROLES.ENCARGADO) {
     const createdBy = record.creadoPorId || record.createdByUserId || "";
     const inScope = includesArea(getUserScopeAreas(user, subgerentes), record.areaNombre || record.area);
@@ -544,7 +602,7 @@ export function getVisibleModules(user) {
 
 export function filterAreasByUser(areas, user, subgerentes = []) {
   if (!Array.isArray(areas)) return [];
-  if (user?.rol === ROLES.GERENTE) return areas;
+  if (canViewAllData(user)) return areas;
   return areas.filter((area) => canViewArea(user, area, subgerentes));
 }
 
@@ -554,7 +612,7 @@ export function filterAreasByUserRole(areas, user, subgerentes = []) {
 
 export function filterDataByUserRole(data, user, areaField = "area", subgerentes = []) {
   if (!Array.isArray(data)) return [];
-  if (user?.rol === ROLES.GERENTE) return data;
+  if (canViewAllData(user)) return data;
 
   const scopeAreas = getUserScopeAreas(user, subgerentes);
   if (!scopeAreas.length) return [];
@@ -581,7 +639,7 @@ export function filterEvaluationsByUser(user, evaluations, subgerentes = []) {
 
 export function filterMonthlyKpiByUser(user, monthlyKpi, subgerentes = []) {
   if (!Array.isArray(monthlyKpi)) return [];
-  if (user?.rol === ROLES.GERENTE) return monthlyKpi;
+  if (canViewAllData(user)) return monthlyKpi;
 
   const scopeAreas = getUserScopeAreas(user, subgerentes);
   if (!scopeAreas.length) return [];

@@ -22,6 +22,8 @@ import {
 } from "lucide-react";
 
 const iconMap = {
+  superadminPanel: ShieldCheck,
+  empresasSucursales: Store,
   dashboard: LayoutDashboard,
   areas: MapPinned,
   encargados: UserCog,

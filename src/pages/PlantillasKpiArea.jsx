@@ -4,7 +4,7 @@ import DataTable from "../components/DataTable";
 import FormField from "../components/FormField";
 import Modal from "../components/Modal";
 import { KPI_AREAS } from "../data/kpiAreaTemplates";
-import { ROLES, canViewAllData, sameArea } from "../services/permissionsService";
+import { canEditMasterData, canViewAllData, sameArea } from "../services/permissionsService";
 import { normalizeCargoName } from "../services/relationsService";
 
 const initialForm = {
@@ -96,7 +96,7 @@ export default function PlantillasKpiArea({
   const [message, setMessage] = useState("");
   const [areaFilter, setAreaFilter] = useState("");
 
-  const canEdit = activeUser?.rol === ROLES.GERENTE;
+  const canEdit = canEditMasterData(activeUser);
   const areaNames = useMemo(() => {
     return uniqueAreaNames([
       ...KPI_AREAS,

@@ -9,7 +9,7 @@ import {
   validateCollaboratorRows,
 } from "../services/collaboratorImportService";
 import { getKpiTemplatesByAreaAndCargo, getManagerByArea } from "../services/relationsService";
-import { ROLES, sameArea } from "../services/permissionsService";
+import { canEditMasterData, sameArea } from "../services/permissionsService";
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
@@ -50,7 +50,7 @@ export default function Colaboradores({
   const [bulkPreview, setBulkPreview] = useState([]);
   const [bulkError, setBulkError] = useState("");
   const [bulkMessage, setBulkMessage] = useState("");
-  const canBulkImport = activeUser?.rol === ROLES.GERENTE;
+  const canBulkImport = canEditMasterData(activeUser);
   const validPreviewRows = bulkPreview.filter((row) => row.valid);
   const invalidPreviewRows = bulkPreview.filter((row) => !row.valid);
 
