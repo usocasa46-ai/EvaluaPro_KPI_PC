@@ -31,6 +31,7 @@ export const STORAGE_KEYS = {
   activeUserId: "active_user",
   legacyActiveUserId: "kpi_usuario_activo",
   operationalResetVersion: "operational_reset_keep_users_v1",
+  supermixManagerAccessPatch: "access_patch_supermix_gerente_v1",
 };
 
 export const OPERATIONAL_STORAGE_KEYS = [
@@ -59,6 +60,7 @@ export const PRESERVED_STORAGE_KEYS = [
   STORAGE_KEYS.configuracion,
   STORAGE_KEYS.activeUserId,
   STORAGE_KEYS.activeCompany,
+  STORAGE_KEYS.supermixManagerAccessPatch,
 ];
 
 export function readStorage(key, fallback) {

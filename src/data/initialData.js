@@ -30,10 +30,12 @@ export const initialGerentes = [];
 export const initialUsuarios = [
   {
     id: "USR-001",
-    nombre: "Gerente",
+    nombre: "Gerente Supermix",
     usuario: "gerente",
-    password: "1234",
+    password: "Gerente1",
     rol: "Gerente",
+    empresaId: "COMP-SUPERMIX",
+    codigoEmpresa: "SUPERMIX",
     areaAsignada: "",
     areasSupervisadas: [],
     areasAsignadas: [],

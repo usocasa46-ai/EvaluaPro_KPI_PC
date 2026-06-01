@@ -110,7 +110,7 @@ import {
   resetOperationalDataKeepUsers,
   useLocalStorage,
 } from "./services/storageService";
-import { ensureDefaultSuperadmin } from "./services/superadminService";
+import { ensureDefaultSuperadmin, ensureSupermixManagerAccess } from "./services/superadminService";
 
 function mergeConfig(configuracion) {
   return normalizeConfig(configuracion);
@@ -399,6 +399,17 @@ export default function App() {
     const fallbackCompany = companies.find((company) => normalizeCompanyCode(company.codigoEmpresa) === "SUPERMIX");
     if (fallbackCompany) setActiveCompany(normalizeCompany(fallbackCompany));
   }, [activeUser, companies, currentCompany, setActiveCompany]);
+
+  useEffect(() => {
+    const result = ensureSupermixManagerAccess({
+      companies,
+      users: usuarios,
+      persist: true,
+    });
+
+    if (result.changedCompanies) setCompanies(result.companies);
+    if (result.changedUsers) setUsuarios(result.users);
+  }, [companies, usuarios, setCompanies, setUsuarios]);
 
   const evaluationsKpi = useMemo(() => withCollaboratorKpi(evaluaciones), [evaluaciones]);
   const subgerenteEvaluationsKpi = useMemo(() => withSubgerenteKpi(evaluacionesSubgerente), [evaluacionesSubgerente]);
