@@ -152,11 +152,11 @@ export default function Configuracion({ configuracion, areas, canView, onSave, o
     };
 
     // 1. Guardar en localStorage bajo "system_config" con las claves exactas en inglés
-    saveSystemConfig(configToSave);
+    if (!onSave) saveSystemConfig(configToSave);
 
     // 2. Notificar al shell global de App.jsx mediante onSave enviando la versión compatible normalizada
     const normalized = normalizeConfig(configToSave);
-    onSave(normalized);
+    if (onSave) onSave(normalized);
 
     setMessage("Configuración guardada correctamente.");
   }

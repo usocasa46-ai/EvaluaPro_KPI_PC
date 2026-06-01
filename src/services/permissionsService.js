@@ -8,6 +8,15 @@ export const ROLES = {
 export const MODULES = [
   { id: "superadminPanel", label: "Panel Superadmin" },
   { id: "empresasSucursales", label: "Empresas / Clientes" },
+  { id: "superadminCrearEmpresa", label: "Crear Empresa" },
+  { id: "superadminGerenteInicial", label: "Gerente Inicial por Empresa" },
+  { id: "superadminSystemModules", label: "Módulos del Sistema" },
+  { id: "superadminCompanyModules", label: "Módulos por Empresa" },
+  { id: "superadminCustomCompanyModule", label: "Crear Módulo para Empresa" },
+  { id: "superadminGlobalSettings", label: "Configuración Global" },
+  { id: "superadminSecurity", label: "Seguridad Global" },
+  { id: "superadminAudit", label: "Auditoría Global" },
+  { id: "superadminBackups", label: "Respaldos Globales" },
   { id: "dashboard", label: "Dashboard" },
   { id: "areas", label: "Áreas" },
   { id: "colaboradores", label: "Colaboradores" },
@@ -113,6 +122,49 @@ export function canAccessCompanyData(user, companyId) {
   return user.empresaId === companyId;
 }
 
+export function canAccessSuperadminModule(user, moduleId) {
+  return Boolean(
+    isSuperadmin(user) &&
+      [
+        "superadminPanel",
+        "empresasSucursales",
+        "superadminCrearEmpresa",
+        "superadminGerenteInicial",
+        "superadminSystemModules",
+        "superadminCompanyModules",
+        "superadminCustomCompanyModule",
+        "superadminGlobalSettings",
+        "superadminSecurity",
+        "superadminAudit",
+        "superadminBackups",
+      ].includes(moduleId)
+  );
+}
+
+export function canManageGlobalSettings(user) {
+  return isSuperadmin(user);
+}
+
+export function canManageCompanySettings(user, companyId) {
+  if (!user || isSuperadmin(user)) return false;
+  if (user.rol !== ROLES.GERENTE) return false;
+  return !companyId || user.empresaId === companyId;
+}
+
+export function canCreateCustomCompanyModule(user) {
+  return isSuperadmin(user);
+}
+
+export function canViewOperationalData(user, companyId) {
+  return canAccessCompanyData(user, companyId);
+}
+
+export function canAccessCompanyModule(user, moduleKey, companyId) {
+  if (!user || isSuperadmin(user)) return false;
+  if (!moduleKey) return false;
+  return canAccessCompanyData(user, companyId);
+}
+
 export function normalizeAreaName(area = "") {
   const normalized = String(area)
     .normalize("NFD")
@@ -170,7 +222,7 @@ export function canViewAllEvaluations(user) {
 }
 
 export function canAccessSettings(user) {
-  return isSuperadmin(user) || isGerente(user);
+  return isGerente(user);
 }
 
 export function canCreateUsers(user) {
@@ -431,8 +483,7 @@ export function canPrintProductMovementAnalysis(user) {
 
 export function canAccessModule(user, moduleId) {
   if (!user) return false;
-  if (["superadminPanel", "empresasSucursales"].includes(moduleId)) return isSuperadmin(user);
-  if (isSuperadmin(user)) return ["usuarios-roles", "configuracion"].includes(moduleId);
+  if (isSuperadmin(user)) return canAccessSuperadminModule(user, moduleId);
   if (moduleId === "trasladosPendientes") return canAccessTransferPendingModule(user);
   if (moduleId === "analisisMovimientoProductos") return canViewProductMovementAnalysis(user);
 

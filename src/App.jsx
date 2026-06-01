@@ -24,7 +24,17 @@ import Permisos from "./pages/Permisos";
 import PlantillasKpiArea from "./pages/PlantillasKpiArea";
 import Reportes from "./pages/Reportes";
 import Subgerentes from "./pages/Subgerentes";
-import SuperadminPanel from "./pages/SuperadminPanel";
+import SuperadminAudit from "./pages/superadmin/SuperadminAudit";
+import SuperadminBackups from "./pages/superadmin/SuperadminBackups";
+import SuperadminCompanies from "./pages/superadmin/SuperadminCompanies";
+import SuperadminCompanyModules from "./pages/superadmin/SuperadminCompanyModules";
+import SuperadminCreateCompany from "./pages/superadmin/SuperadminCreateCompany";
+import SuperadminCustomModuleBuilder from "./pages/superadmin/SuperadminCustomModuleBuilder";
+import SuperadminDashboard from "./pages/superadmin/SuperadminDashboard";
+import SuperadminGlobalSettings from "./pages/superadmin/SuperadminGlobalSettings";
+import SuperadminInitialManager from "./pages/superadmin/SuperadminInitialManager";
+import SuperadminSecurity from "./pages/superadmin/SuperadminSecurity";
+import SuperadminSystemModules from "./pages/superadmin/SuperadminSystemModules";
 import TrasladosPendientes from "./pages/TrasladosPendientes";
 import UsuariosRoles from "./pages/UsuariosRoles";
 import Vacaciones from "./pages/Vacaciones";
@@ -70,6 +80,15 @@ import { normalizeMonthlyEvaluation, normalizeTemplate } from "./services/kpiMon
 import { normalizeDailyKpiRecord } from "./services/dailyKpiService";
 import { normalizeQuarterlyEvaluation } from "./services/quarterlyEvaluationService";
 import { normalizeConfig } from "./services/configService";
+import { DEFAULT_GLOBAL_SETTINGS, normalizeGlobalSettings } from "./services/globalSettingsService";
+import { getCompanySettings } from "./services/companySettingsService";
+import {
+  getAvailableSystemModules,
+  getCustomModulesForCompany,
+  normalizeCustomCompanyModule,
+  normalizeSystemModule,
+  upsertCustomCompanyModule,
+} from "./services/companyModuleService";
 import {
   attachCompanyToRecord,
   companyHasModule,
@@ -243,6 +262,13 @@ export default function App() {
     STORAGE_KEYS.companies,
     ensureDefaultCompanies([], initialData.configuracion)
   );
+  const [globalSettings, setGlobalSettings] = useLocalStorage(STORAGE_KEYS.globalSettings, DEFAULT_GLOBAL_SETTINGS);
+  const [companySettings, setCompanySettings] = useLocalStorage(STORAGE_KEYS.companySettings, {});
+  const [availableSystemModules, setAvailableSystemModules] = useLocalStorage(
+    STORAGE_KEYS.availableSystemModules,
+    getAvailableSystemModules()
+  );
+  const [customCompanyModules, setCustomCompanyModules] = useLocalStorage(STORAGE_KEYS.customCompanyModules, []);
   const [configuracion, setConfiguracion] = useLocalStorage(STORAGE_KEYS.configuracion, initialData.configuracion);
   const [activeSession, setActiveSession] = useLocalStorage(STORAGE_KEYS.activeUserId, null);
   const [activeCompany, setActiveCompany] = useLocalStorage(STORAGE_KEYS.activeCompany, null);
@@ -289,6 +315,11 @@ export default function App() {
   }, [activeSession, usuarios]);
 
   const safeConfig = useMemo(() => mergeConfig(configuracion), [configuracion]);
+  const safeGlobalSettings = useMemo(() => normalizeGlobalSettings(globalSettings), [globalSettings]);
+  const safeAvailableSystemModules = useMemo(
+    () => (Array.isArray(availableSystemModules) ? availableSystemModules.map(normalizeSystemModule) : []),
+    [availableSystemModules]
+  );
   const currentCompany = useMemo(() => {
     if (isSuperadmin(activeUser)) return null;
     if (activeCompany?.id) return normalizeCompany(activeCompany);
@@ -297,12 +328,28 @@ export default function App() {
     });
     return userCompany ? normalizeCompany(userCompany) : null;
   }, [activeCompany, activeUser, companies]);
+  const currentCompanyConfig = useMemo(() => {
+    if (!currentCompany) return safeConfig;
+    return getCompanySettings(currentCompany.id, companySettings[currentCompany.id] || currentCompany.configuracion || safeConfig);
+  }, [companySettings, currentCompany, safeConfig]);
   const modules = useMemo(() => {
     const visibleModules = getVisibleModules(activeUser);
     if (isSuperadmin(activeUser)) return visibleModules;
     if (!currentCompany) return visibleModules;
-    return visibleModules.filter((module) => companyHasModule(currentCompany, module.id));
-  }, [activeUser, currentCompany]);
+    const activeSystemModuleIds = new Set(
+      safeAvailableSystemModules.filter((module) => module.estado !== "Inactivo").map((module) => module.id)
+    );
+    const baseModules = visibleModules.filter((module) => {
+      if (!companyHasModule(currentCompany, module.id)) return false;
+      return activeSystemModuleIds.size ? activeSystemModuleIds.has(module.id) : true;
+    });
+    const customModules = getCustomModulesForCompany(customCompanyModules, currentCompany, activeUser?.rol).map((module) => ({
+      id: `customCompanyModule:${module.id}`,
+      label: module.nombreModulo,
+      custom: true,
+    }));
+    return [...baseModules, ...customModules];
+  }, [activeUser, currentCompany, customCompanyModules, safeAvailableSystemModules]);
 
   useEffect(() => {
     const defaultCompany = migrateExistingDataToDefaultCompany(initialData.configuracion);
@@ -524,6 +571,7 @@ export default function App() {
   const canCreateOperational = canCreateOperationalEvaluation(activeUser);
 
   function canUseView(moduleId) {
+    if (String(moduleId || "").startsWith("customCompanyModule:")) return Boolean(!isSuperadmin(activeUser) && currentCompany);
     if (!canAccessModule(activeUser, moduleId)) return false;
     if (isSuperadmin(activeUser)) return true;
     if (!currentCompany) return false;
@@ -810,9 +858,17 @@ export default function App() {
       return null;
     }
 
-    const company = companies.find((item) => item.id === record.companyId);
+    const company = companies.find((item) => item.id === record.companyId) || (record.company ? normalizeCompany(record.company) : null);
     if (!company) {
       window.alert("Seleccione una empresa valida.");
+      return null;
+    }
+    if (!record.nombre || !record.usuario || !record.password) {
+      window.alert("Nombre, usuario y contrasena del gerente son obligatorios.");
+      return null;
+    }
+    if (record.confirmPassword && record.password !== record.confirmPassword) {
+      window.alert("Las contrasenas del gerente no coinciden.");
       return null;
     }
 
@@ -840,7 +896,7 @@ export default function App() {
       areaAsignada: "",
       areasSupervisadas: [],
       areasAsignadas: [],
-      estado: "Activo",
+      estado: record.estado || "Activo",
       empresaId: company.id,
       codigoEmpresa: normalizeCompanyCode(company.codigoEmpresa),
       createdAt: new Date().toISOString(),
@@ -867,6 +923,57 @@ export default function App() {
     );
 
     return true;
+  }
+
+  function saveGlobalSettingsRecord(settings) {
+    if (!isSuperadmin(activeUser)) {
+      window.alert("Solo el Superadmin puede modificar la configuracion global.");
+      return null;
+    }
+    const saved = normalizeGlobalSettings({ ...settings, updatedAt: new Date().toISOString() });
+    setGlobalSettings(saved);
+    return saved;
+  }
+
+  function saveAvailableSystemModules(modules = []) {
+    if (!isSuperadmin(activeUser)) {
+      window.alert("Solo el Superadmin puede administrar modulos globales.");
+      return null;
+    }
+    const saved = Array.isArray(modules) ? modules.map(normalizeSystemModule) : [];
+    setAvailableSystemModules(saved);
+    return saved;
+  }
+
+  function saveCurrentCompanySettings(settings) {
+    if (!currentCompany || isSuperadmin(activeUser)) {
+      window.alert("No tienes permiso para modificar configuracion de empresa.");
+      return null;
+    }
+    const saved = normalizeConfig({ ...settings, updatedAt: new Date().toISOString() });
+    setCompanySettings((current) => ({
+      ...current,
+      [currentCompany.id]: saved,
+    }));
+    return saved;
+  }
+
+  function saveCustomCompanyModule(record) {
+    if (!isSuperadmin(activeUser)) {
+      window.alert("Solo el Superadmin puede crear modulos personalizados.");
+      return null;
+    }
+    const company = companies.find((item) => item.id === record.empresaId);
+    if (!company) {
+      window.alert("Seleccione una empresa valida.");
+      return null;
+    }
+    const saved = normalizeCustomCompanyModule({
+      ...record,
+      codigoEmpresa: company.codigoEmpresa,
+    });
+    setCustomCompanyModules((current) => upsertCustomCompanyModule(current, saved));
+    return saved;
   }
 
   function confirmOperationalReset() {
@@ -1006,35 +1113,119 @@ export default function App() {
   function renderView() {
     const fallbackView = isSuperadmin(activeUser) ? "superadminPanel" : "dashboard";
     const effectiveView = canUseView(view) ? view : fallbackView;
+    if (effectiveView.startsWith("customCompanyModule:")) {
+      const customModuleId = effectiveView.split(":")[1];
+      const customModule = customCompanyModules.find((module) => module.id === customModuleId);
+      return (
+        <section className="page-shell">
+          <header className="module-header">
+            <div>
+              <h1>{customModule?.nombreModulo || "Modulo personalizado"}</h1>
+              <p>{customModule?.descripcion || "Modulo personalizado preparado para esta empresa."}</p>
+            </div>
+          </header>
+          <section className="content-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>{customModule?.tipoModulo || "Control operativo"}</h2>
+                <span>Este modulo pertenece solo a {currentCompany?.nombreEmpresa || currentCompany?.codigoEmpresa}.</span>
+              </div>
+            </div>
+            <p className="empty-state">Estructura creada. La pantalla operativa final queda pendiente segun el formulario o flujo solicitado.</p>
+          </section>
+        </section>
+      );
+    }
 
     switch (effectiveView) {
       case "superadminPanel":
         return (
-          <SuperadminPanel
+          <SuperadminDashboard
             activeUser={activeUser}
             onNavigate={setView}
             companies={companies}
             usuarios={usuarios}
-            configuracion={safeConfig}
-            onSaveCompany={upsertCompany}
-            onCreateInitialCompanyManager={createInitialCompanyManager}
-            onChangeUserPassword={changeUserPassword}
+            globalSettings={safeGlobalSettings}
+            customCompanyModules={customCompanyModules}
+            systemModules={safeAvailableSystemModules}
           />
         );
       case "empresasSucursales":
         return (
-          <SuperadminPanel
+          <SuperadminCompanies
             activeUser={activeUser}
             onNavigate={setView}
             companies={companies}
             usuarios={usuarios}
-            configuracion={safeConfig}
             onSaveCompany={upsertCompany}
             onCreateInitialCompanyManager={createInitialCompanyManager}
-            onChangeUserPassword={changeUserPassword}
-            focusSection="companies"
           />
         );
+      case "superadminCrearEmpresa":
+        return (
+          <SuperadminCreateCompany
+            activeUser={activeUser}
+            onNavigate={setView}
+            companies={companies}
+            onSaveCompany={upsertCompany}
+            onCreateInitialCompanyManager={createInitialCompanyManager}
+          />
+        );
+      case "superadminGerenteInicial":
+        return (
+          <SuperadminInitialManager
+            activeUser={activeUser}
+            companies={companies}
+            usuarios={usuarios}
+            onCreateInitialCompanyManager={createInitialCompanyManager}
+          />
+        );
+      case "superadminSystemModules":
+        return (
+          <SuperadminSystemModules
+            activeUser={activeUser}
+            systemModules={safeAvailableSystemModules}
+            onSaveSystemModules={saveAvailableSystemModules}
+          />
+        );
+      case "superadminCompanyModules":
+        return (
+          <SuperadminCompanyModules
+            activeUser={activeUser}
+            companies={companies}
+            systemModules={safeAvailableSystemModules}
+            onSaveCompany={upsertCompany}
+          />
+        );
+      case "superadminCustomCompanyModule":
+        return (
+          <SuperadminCustomModuleBuilder
+            activeUser={activeUser}
+            companies={companies}
+            customCompanyModules={customCompanyModules}
+            onSaveCustomCompanyModule={saveCustomCompanyModule}
+          />
+        );
+      case "superadminGlobalSettings":
+        return (
+          <SuperadminGlobalSettings
+            activeUser={activeUser}
+            globalSettings={safeGlobalSettings}
+            onSaveGlobalSettings={saveGlobalSettingsRecord}
+          />
+        );
+      case "superadminSecurity":
+        return (
+          <SuperadminSecurity
+            activeUser={activeUser}
+            usuarios={usuarios}
+            onChangeUserPassword={changeUserPassword}
+          />
+        );
+      case "superadminAudit":
+        return <SuperadminAudit activeUser={activeUser} companies={companies} usuarios={usuarios} />;
+      case "superadminBackups":
+        return <SuperadminBackups activeUser={activeUser} />;
       case "areas":
         return (
           <Areas
@@ -1119,7 +1310,7 @@ export default function App() {
             activeUser={activeUser}
             scopeAreas={quarterlyScopeAreas}
             startNewSignal={quarterlyStartSignal}
-            supermarketName={safeConfig.nombreSupermercado}
+            supermarketName={currentCompanyConfig.nombreSupermercado}
             onSaveEvaluation={upsertQuarterlyEvaluation}
           />
         );
@@ -1182,7 +1373,7 @@ export default function App() {
             areas={visibleAreas}
             encargados={visibleEncargados}
             activeUser={activeUser}
-            configuracion={safeConfig}
+            configuracion={currentCompanyConfig}
             onSaveRecord={upsertPermitRecord}
           />
         );
@@ -1247,10 +1438,10 @@ export default function App() {
       case "configuracion":
         return (
           <Configuracion
-            configuracion={safeConfig}
+            configuracion={currentCompanyConfig}
             areas={isSuperadmin(activeUser) ? areas : visibleAreas}
             canView={canAccessSettings(activeUser)}
-            onSave={setConfiguracion}
+            onSave={saveCurrentCompanySettings}
             onBack={() => setView("dashboard")}
           />
         );
@@ -1267,7 +1458,7 @@ export default function App() {
             topColaboradores={topColaboradores}
             tendencia={initialData.tendencia}
             activeUser={activeUser}
-            configuracion={safeConfig}
+            configuracion={currentCompanyConfig}
             canCreateQuarterly={canCreateQuarterlyEvaluation(activeUser)}
             onNewQuarterlyEvaluation={openNewQuarterlyEvaluationFromDashboard}
           />
@@ -1276,16 +1467,24 @@ export default function App() {
   }
 
   if (!activeUser) {
-    return <Login supermarketName={safeConfig.nombreSupermercado} onLogin={login} />;
+    return <Login supermarketName={safeGlobalSettings.platformName} onLogin={login} />;
   }
 
   const effectiveView = canUseView(view) ? view : isSuperadmin(activeUser) ? "superadminPanel" : "dashboard";
-  const effectiveModuleLabel = MODULES.find((module) => module.id === effectiveView)?.label || "Dashboard";
+  const effectiveModuleLabel =
+    modules.find((module) => module.id === effectiveView)?.label ||
+    MODULES.find((module) => module.id === effectiveView)?.label ||
+    "Dashboard";
 
   return (
     <div
-      className={`app-shell ${sidebarCollapsed ? "is-sidebar-collapsed" : ""} ${safeConfig.visual.tema === "Oscuro" ? "theme-dark" : ""} ${safeConfig.visual.vista === "Compacta" ? "theme-compact" : ""}`}
-      style={{ "--primary": safeConfig.visual.colorPrincipal, "--secondary": safeConfig.visual.colorSecundario }}
+      className={`app-shell ${sidebarCollapsed ? "is-sidebar-collapsed" : ""} ${
+        !isSuperadmin(activeUser) && currentCompanyConfig.visual.tema === "Oscuro" ? "theme-dark" : ""
+      } ${!isSuperadmin(activeUser) && currentCompanyConfig.visual.vista === "Compacta" ? "theme-compact" : ""}`}
+      style={{
+        "--primary": isSuperadmin(activeUser) ? "#0f172a" : currentCompanyConfig.visual.colorPrincipal,
+        "--secondary": isSuperadmin(activeUser) ? "#facc15" : currentCompanyConfig.visual.colorSecundario,
+      }}
     >
       <Sidebar
         collapsed={sidebarCollapsed}
@@ -1293,15 +1492,15 @@ export default function App() {
         activeView={effectiveView}
         onNavigate={setView}
         onToggle={() => setSidebarCollapsed((value) => !value)}
-        supermarketName={safeConfig.nombreSupermercado}
-        logoDataUrl={safeConfig.logoDataUrl}
+        supermarketName={isSuperadmin(activeUser) ? safeGlobalSettings.platformName : currentCompanyConfig.nombreSupermercado}
+        logoDataUrl={isSuperadmin(activeUser) ? "" : currentCompanyConfig.logoDataUrl}
       />
 
       <main className="main-shell">
         <Topbar
           activeLabel={effectiveModuleLabel}
           activeUser={activeUser}
-          supermarketName={safeConfig.nombreSupermercado}
+          supermarketName={isSuperadmin(activeUser) ? safeGlobalSettings.platformName : currentCompanyConfig.nombreSupermercado}
           onLogout={logout}
         />
         <div className="workspace">{renderView()}</div>

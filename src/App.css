@@ -4623,6 +4623,9 @@ button {
 }
 
 .superadmin-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 12px 14px;
   border-radius: 12px;
   font-size: 13px;
@@ -4786,6 +4789,13 @@ button {
   font-size: 16px;
 }
 
+.section-title {
+  margin: 14px 0 10px;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 800;
+}
+
 .superadmin-card__header p {
   margin: 4px 0 0;
   color: #64748b;
@@ -4883,6 +4893,59 @@ button {
 
 .superadmin-table-wrap {
   overflow-x: auto;
+}
+
+.superadmin-company-cell {
+  display: grid;
+  gap: 3px;
+}
+
+.superadmin-company-cell strong {
+  color: #0f1d32;
+  font-size: 13px;
+}
+
+.superadmin-company-cell span {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.superadmin-module-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.superadmin-module-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 70px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid #dbe5f2;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.superadmin-module-option input {
+  margin-top: 3px;
+}
+
+.superadmin-module-option span {
+  display: grid;
+  gap: 4px;
+}
+
+.superadmin-module-option strong {
+  color: #0f1d32;
+  font-size: 13px;
+}
+
+.superadmin-module-option small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .superadmin-table {
@@ -5031,6 +5094,10 @@ button {
   .superadmin-grid {
     grid-template-columns: 1fr;
   }
+
+  .superadmin-module-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -5041,7 +5108,8 @@ button {
 
   .superadmin-metrics,
   .superadmin-system-strip,
-  .superadmin-quick-grid {
+  .superadmin-quick-grid,
+  .superadmin-module-grid {
     grid-template-columns: 1fr;
   }
 }

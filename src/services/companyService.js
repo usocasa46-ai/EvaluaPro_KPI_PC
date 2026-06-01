@@ -250,3 +250,25 @@ export function companyHasModule(company, moduleId) {
   if (!company || !moduleId) return false;
   return Array.isArray(company.modulosActivos) ? company.modulosActivos.includes(moduleId) : true;
 }
+
+export function getCompanyManagers(company, users = []) {
+  if (!company || !Array.isArray(users)) return [];
+  return users.filter((user) => {
+    if (!user || isSuperadmin(user)) return false;
+    const sameCompany =
+      user.empresaId === company.id ||
+      normalizeCompanyCode(user.codigoEmpresa || "") === normalizeCompanyCode(company.codigoEmpresa);
+    return sameCompany && user.rol === "Gerente" && user.estado !== "Inactivo";
+  });
+}
+
+export function ensureCompanyHasInitialManager(company, users = []) {
+  const managers = getCompanyManagers(company, users);
+  return {
+    hasManager: managers.length > 0,
+    manager: managers[0] || null,
+    message: managers.length
+      ? ""
+      : "Esta empresa no tiene gerente inicial. Nadie podra acceder hasta crear uno.",
+  };
+}

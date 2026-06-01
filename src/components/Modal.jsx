@@ -1,6 +1,8 @@
 import { X } from "lucide-react";
 
-export default function Modal({ title, children, onClose }) {
+export default function Modal({ open = true, title, children, onClose }) {
+  if (!open) return null;
+
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="modal" role="dialog" aria-modal="true" aria-label={title}>
