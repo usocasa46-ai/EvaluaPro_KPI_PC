@@ -7,7 +7,7 @@ export const ROLES = {
 
 export const MODULES = [
   { id: "superadminPanel", label: "Panel Superadmin" },
-  { id: "empresasSucursales", label: "Empresas / Sucursales" },
+  { id: "empresasSucursales", label: "Empresas / Clientes" },
   { id: "dashboard", label: "Dashboard" },
   { id: "areas", label: "Áreas" },
   { id: "colaboradores", label: "Colaboradores" },
@@ -64,11 +64,11 @@ export function canManageRoles(user) {
 }
 
 export function canViewAllAreas(user) {
-  return isSuperadmin(user) || isGerente(user);
+  return isGerente(user);
 }
 
 export function canViewAllReports(user) {
-  return isSuperadmin(user) || isGerente(user);
+  return isGerente(user);
 }
 
 export function canManageModules(user) {
@@ -81,6 +81,36 @@ export function canViewAuditLog(user) {
 
 export function canManageBackups(user) {
   return isSuperadmin(user);
+}
+
+export function isCompanyUser(user) {
+  return Boolean(user && !isSuperadmin(user) && user.empresaId && user.codigoEmpresa);
+}
+
+export function canManageCompanies(user) {
+  return isSuperadmin(user);
+}
+
+export function canCreateCompany(user) {
+  return isSuperadmin(user);
+}
+
+export function canEditCompany(user) {
+  return isSuperadmin(user);
+}
+
+export function canManageCompanyModules(user) {
+  return isSuperadmin(user);
+}
+
+export function canCreateInitialCompanyManager(user) {
+  return isSuperadmin(user);
+}
+
+export function canAccessCompanyData(user, companyId) {
+  if (!user || isSuperadmin(user)) return false;
+  if (!companyId) return Boolean(user.empresaId);
+  return user.empresaId === companyId;
 }
 
 export function normalizeAreaName(area = "") {
@@ -132,11 +162,11 @@ export function getUserScopeAreas(user, subgerentes = []) {
 }
 
 export function canViewAllData(user) {
-  return isSuperadmin(user) || isGerente(user);
+  return isGerente(user);
 }
 
 export function canViewAllEvaluations(user) {
-  return isSuperadmin(user) || isGerente(user);
+  return isGerente(user);
 }
 
 export function canAccessSettings(user) {
@@ -148,7 +178,7 @@ export function canCreateUsers(user) {
 }
 
 export function canEditMasterData(user) {
-  return isSuperadmin(user) || isGerente(user);
+  return isGerente(user);
 }
 
 export function canManageUsers(user) {
@@ -160,7 +190,7 @@ export function canAccessUserManagement(user) {
 }
 
 export function canCreateSubgerentes(user) {
-  return isSuperadmin(user) || isGerente(user);
+  return isGerente(user);
 }
 
 export function canEvaluateCollaborator(user) {
@@ -184,7 +214,7 @@ export function canCreateOperationalEvaluation(user) {
 }
 
 export function canViewKpiMonthly(user) {
-  return isSuperadmin(user) || [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user?.rol);
+  return [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user?.rol);
 }
 
 export function canEditKpiMonthly(user) {
@@ -192,7 +222,7 @@ export function canEditKpiMonthly(user) {
 }
 
 export function canAccessQuarterlyEvaluation(user) {
-  return isSuperadmin(user) || [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user?.rol);
+  return [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user?.rol);
 }
 
 export function canCreateQuarterlyEvaluation(user) {
@@ -376,7 +406,6 @@ export function canViewSubManagerEvaluation(user) {
 }
 
 export function canAccessTransferPendingModule(user) {
-  if (isSuperadmin(user)) return true;
   if (!user) return false;
   const receivingArea = "Recepción de Mercancía";
 
@@ -388,11 +417,10 @@ export function canAccessTransferPendingModule(user) {
 }
 
 export function canViewProductMovementAnalysis(user) {
-  return isSuperadmin(user) || [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user?.rol);
+  return [ROLES.GERENTE, ROLES.SUBGERENTE, ROLES.ENCARGADO].includes(user?.rol);
 }
 
 export function canImportProductMovementAnalysis(user) {
-  if (isSuperadmin(user)) return true;
   if (user?.rol === ROLES.GERENTE) return true;
   return Boolean(user?.rol === ROLES.ENCARGADO && sameArea(user.areaAsignada, "Recepción de Mercancía"));
 }
@@ -404,7 +432,7 @@ export function canPrintProductMovementAnalysis(user) {
 export function canAccessModule(user, moduleId) {
   if (!user) return false;
   if (["superadminPanel", "empresasSucursales"].includes(moduleId)) return isSuperadmin(user);
-  if (isSuperadmin(user)) return true;
+  if (isSuperadmin(user)) return ["usuarios-roles", "configuracion"].includes(moduleId);
   if (moduleId === "trasladosPendientes") return canAccessTransferPendingModule(user);
   if (moduleId === "analisisMovimientoProductos") return canViewProductMovementAnalysis(user);
 
@@ -546,12 +574,12 @@ function canViewHrRecord(user, record, subgerentes = []) {
 }
 
 function canCreateHrRecord(user) {
-  return isSuperadmin(user) || [ROLES.GERENTE, ROLES.ENCARGADO].includes(user?.rol);
+  return [ROLES.GERENTE, ROLES.ENCARGADO].includes(user?.rol);
 }
 
 function canEditHrRecord(user, record, subgerentes = []) {
   if (!user || !record) return false;
-  if (isSuperadmin(user) || user.rol === ROLES.GERENTE) return true;
+  if (user.rol === ROLES.GERENTE) return true;
   if (user.rol === ROLES.ENCARGADO) {
     const createdBy = record.creadoPorId || record.createdByUserId || "";
     const inScope = includesArea(getUserScopeAreas(user, subgerentes), record.areaNombre || record.area);

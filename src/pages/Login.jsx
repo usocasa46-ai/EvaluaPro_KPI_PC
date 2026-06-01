@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { ClipboardCheck, Lightbulb, Lock, LogIn, ShieldCheck, TrendingUp, User, Users } from "lucide-react";
+import { Building2, ClipboardCheck, Lightbulb, Lock, LogIn, ShieldCheck, TrendingUp, User, Users } from "lucide-react";
 
 export default function Login({ supermarketName, onLogin }) {
-  const [form, setForm] = useState({ usuario: "", password: "" });
+  const [form, setForm] = useState({ codigoEmpresa: "", usuario: "", password: "" });
   const [error, setError] = useState("");
 
   function updateField(event) {
@@ -12,7 +12,7 @@ export default function Login({ supermarketName, onLogin }) {
 
   function submit(event) {
     event.preventDefault();
-    const result = onLogin(form.usuario, form.password);
+    const result = onLogin(form.codigoEmpresa, form.usuario, form.password);
     if (!result.ok) {
       setError(result.message || "Usuario o contraseña incorrectos.");
     }
@@ -101,6 +101,18 @@ export default function Login({ supermarketName, onLogin }) {
             <p className="login-subtitle">Acceso autorizado para personal del sistema.</p>
 
             <form className="login-form" onSubmit={submit}>
+              <label className="login-input-group">
+                <span className="login-input-icon"><Building2 size={17} /></span>
+                <input
+                  name="codigoEmpresa"
+                  type="text"
+                  placeholder="Código de empresa"
+                  value={form.codigoEmpresa}
+                  autoComplete="organization"
+                  onChange={updateField}
+                />
+              </label>
+
               <label className="login-input-group">
                 <span className="login-input-icon"><User size={17} /></span>
                 <input

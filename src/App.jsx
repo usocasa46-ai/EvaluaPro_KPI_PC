@@ -70,7 +70,15 @@ import { normalizeMonthlyEvaluation, normalizeTemplate } from "./services/kpiMon
 import { normalizeDailyKpiRecord } from "./services/dailyKpiService";
 import { normalizeQuarterlyEvaluation } from "./services/quarterlyEvaluationService";
 import { normalizeConfig } from "./services/configService";
-import { ensureDefaultCompanies, normalizeCompany } from "./services/companyService";
+import {
+  attachCompanyToRecord,
+  companyHasModule,
+  ensureDefaultCompanies,
+  filterByActiveCompany,
+  migrateExistingDataToDefaultCompany,
+  normalizeCompany,
+  normalizeCompanyCode,
+} from "./services/companyService";
 import {
   normalizePermitRecord,
   normalizeVacationRecord,
@@ -178,6 +186,8 @@ function monthlyEvaluationsToDashboardRows(evaluations = []) {
         colaborador: member.colaboradorNombre || "Evaluación por área",
         colaboradorNombre: member.colaboradorNombre || "Evaluación por área",
         area: evaluation.area,
+        empresaId: evaluation.empresaId || "",
+        codigoEmpresa: evaluation.codigoEmpresa || "",
         evaluadorId: evaluation.evaluadorId || "",
         evaluador: evaluation.evaluadorNombre || "",
         evaluadorNombre: evaluation.evaluadorNombre || "",
@@ -235,6 +245,7 @@ export default function App() {
   );
   const [configuracion, setConfiguracion] = useLocalStorage(STORAGE_KEYS.configuracion, initialData.configuracion);
   const [activeSession, setActiveSession] = useLocalStorage(STORAGE_KEYS.activeUserId, null);
+  const [activeCompany, setActiveCompany] = useLocalStorage(STORAGE_KEYS.activeCompany, null);
   const [quarterlyStartSignal, setQuarterlyStartSignal] = useState(0);
 
   const performOperationalReset = useCallback(() => {
@@ -268,20 +279,79 @@ export default function App() {
 
   const activeUser = useMemo(() => {
     const activeId = typeof activeSession === "string" ? activeSession : activeSession?.id;
-    return usuarios.find((user) => user.id === activeId && user.estado !== "Inactivo") || null;
+    const user = usuarios.find((item) => item.id === activeId && item.estado !== "Inactivo") || null;
+    if (!user || isSuperadmin(user)) return user;
+    return {
+      ...user,
+      empresaId: user.empresaId || activeSession?.currentCompanyId || "",
+      codigoEmpresa: user.codigoEmpresa || activeSession?.currentCompanyCode || "",
+    };
   }, [activeSession, usuarios]);
 
   const safeConfig = useMemo(() => mergeConfig(configuracion), [configuracion]);
-  const modules = useMemo(() => getVisibleModules(activeUser), [activeUser]);
+  const currentCompany = useMemo(() => {
+    if (isSuperadmin(activeUser)) return null;
+    if (activeCompany?.id) return normalizeCompany(activeCompany);
+    const userCompany = companies.find((company) => {
+      return company.id === activeUser?.empresaId || normalizeCompanyCode(company.codigoEmpresa) === normalizeCompanyCode(activeUser?.codigoEmpresa);
+    });
+    return userCompany ? normalizeCompany(userCompany) : null;
+  }, [activeCompany, activeUser, companies]);
+  const modules = useMemo(() => {
+    const visibleModules = getVisibleModules(activeUser);
+    if (isSuperadmin(activeUser)) return visibleModules;
+    if (!currentCompany) return visibleModules;
+    return visibleModules.filter((module) => companyHasModule(currentCompany, module.id));
+  }, [activeUser, currentCompany]);
 
   useEffect(() => {
-    setAreas((current) => mergeMissingById(current, initialData.areas));
-    setEncargados((current) => mergeMissingById(current, initialData.encargados));
-    setColaboradores((current) => mergeMissingById(current, initialData.colaboradores));
-    setUsuarios((current) => ensureDefaultSuperadmin(mergeMissingUsers(current, initialData.usuarios)));
+    const defaultCompany = migrateExistingDataToDefaultCompany(initialData.configuracion);
+    const attachList = (records) => records.map((record) => attachCompanyToRecord(record, defaultCompany));
+
+    setAreas((current) => attachList(mergeMissingById(current, initialData.areas)));
+    setEncargados((current) => attachList(mergeMissingById(current, initialData.encargados)));
+    setColaboradores((current) => attachList(mergeMissingById(current, initialData.colaboradores)));
+    setUsuarios((current) => ensureDefaultSuperadmin(attachList(mergeMissingUsers(current, initialData.usuarios))));
     setCompanies((current) => ensureDefaultCompanies(current, initialData.configuracion));
-    setKpiAreaTemplates((current) => mergeMissingTemplates(current, initialKpiAreaTemplates));
-  }, [setAreas, setColaboradores, setCompanies, setEncargados, setKpiAreaTemplates, setUsuarios]);
+    setKpiAreaTemplates((current) => attachList(mergeMissingTemplates(current, initialKpiAreaTemplates)));
+    setEvaluaciones((current) => attachList(current));
+    setEvaluacionesTrimestrales((current) => attachList(current));
+    setKpiMonthlyEvaluations((current) => attachList(current));
+    setKpiDailyRecords((current) => attachList(current));
+    setVacacionesRecords((current) => attachList(current));
+    setPermisosRecords((current) => attachList(current));
+    setAmonestacionesRecords((current) => attachList(current));
+    setIncidencias((current) => attachList(current));
+    setSubgerentes((current) => attachList(current));
+    setEvaluacionesSubgerente((current) => attachList(current));
+    setEvaluacionesEncargado((current) => attachList(current));
+    setGerentes((current) => attachList(current));
+  }, [
+    setAmonestacionesRecords,
+    setAreas,
+    setColaboradores,
+    setCompanies,
+    setEncargados,
+    setEvaluaciones,
+    setEvaluacionesEncargado,
+    setEvaluacionesSubgerente,
+    setEvaluacionesTrimestrales,
+    setGerentes,
+    setIncidencias,
+    setKpiAreaTemplates,
+    setKpiDailyRecords,
+    setKpiMonthlyEvaluations,
+    setPermisosRecords,
+    setSubgerentes,
+    setUsuarios,
+    setVacacionesRecords,
+  ]);
+
+  useEffect(() => {
+    if (!activeUser || isSuperadmin(activeUser) || currentCompany) return;
+    const fallbackCompany = companies.find((company) => normalizeCompanyCode(company.codigoEmpresa) === "SUPERMIX");
+    if (fallbackCompany) setActiveCompany(normalizeCompany(fallbackCompany));
+  }, [activeUser, companies, currentCompany, setActiveCompany]);
 
   const evaluationsKpi = useMemo(() => withCollaboratorKpi(evaluaciones), [evaluaciones]);
   const subgerenteEvaluationsKpi = useMemo(() => withSubgerenteKpi(evaluacionesSubgerente), [evaluacionesSubgerente]);
@@ -306,86 +376,122 @@ export default function App() {
     [normalizedKpiMonthlyEvaluations]
   );
 
-  const visibleAreas = useMemo(() => filterAreasByUser(areas, activeUser, subgerentes), [areas, activeUser, subgerentes]);
+  const companyAreas = useMemo(() => filterByActiveCompany(areas, currentCompany), [areas, currentCompany]);
+  const companyEncargados = useMemo(() => filterByActiveCompany(encargados, currentCompany), [encargados, currentCompany]);
+  const companyColaboradores = useMemo(() => filterByActiveCompany(colaboradores, currentCompany), [colaboradores, currentCompany]);
+  const companyEvaluationsKpi = useMemo(() => filterByActiveCompany(evaluationsKpi, currentCompany), [currentCompany, evaluationsKpi]);
+  const companyKpiAreaTemplates = useMemo(
+    () => filterByActiveCompany(normalizedKpiAreaTemplates, currentCompany),
+    [currentCompany, normalizedKpiAreaTemplates]
+  );
+  const companyKpiMonthlyEvaluations = useMemo(
+    () => filterByActiveCompany(normalizedKpiMonthlyEvaluations, currentCompany),
+    [currentCompany, normalizedKpiMonthlyEvaluations]
+  );
+  const companyKpiDailyRecords = useMemo(() => filterByActiveCompany(kpiDailyRecords, currentCompany), [currentCompany, kpiDailyRecords]);
+  const companyVacacionesRecords = useMemo(() => filterByActiveCompany(vacacionesRecords, currentCompany), [currentCompany, vacacionesRecords]);
+  const companyPermisosRecords = useMemo(() => filterByActiveCompany(permisosRecords, currentCompany), [currentCompany, permisosRecords]);
+  const companyAmonestacionesRecords = useMemo(
+    () => filterByActiveCompany(amonestacionesRecords, currentCompany),
+    [amonestacionesRecords, currentCompany]
+  );
+  const companyMonthlyDashboardRows = useMemo(
+    () => filterByActiveCompany(monthlyDashboardRows, currentCompany),
+    [currentCompany, monthlyDashboardRows]
+  );
+  const companyEvaluacionesEncargado = useMemo(
+    () => filterByActiveCompany(encargadoEvaluationsKpi, currentCompany),
+    [currentCompany, encargadoEvaluationsKpi]
+  );
+  const companyEvaluacionesSubgerente = useMemo(
+    () => filterByActiveCompany(subgerenteEvaluationsKpi, currentCompany),
+    [currentCompany, subgerenteEvaluationsKpi]
+  );
+  const companyIncidencias = useMemo(() => filterByActiveCompany(incidencias, currentCompany), [currentCompany, incidencias]);
+  const companySubgerentes = useMemo(() => filterByActiveCompany(subgerentes, currentCompany), [currentCompany, subgerentes]);
+  const companyGerentes = useMemo(() => filterByActiveCompany(gerentes, currentCompany), [currentCompany, gerentes]);
+  const companyUsuarios = useMemo(() => filterByActiveCompany(usuarios, currentCompany), [currentCompany, usuarios]);
+
+  const visibleAreas = useMemo(() => filterAreasByUser(companyAreas, activeUser, companySubgerentes), [companyAreas, activeUser, companySubgerentes]);
   const visibleEncargados = useMemo(
-    () => filterDataByUserRole(encargados, activeUser, "area", subgerentes),
-    [encargados, activeUser, subgerentes]
+    () => filterDataByUserRole(companyEncargados, activeUser, "area", companySubgerentes),
+    [companyEncargados, activeUser, companySubgerentes]
   );
   const visibleColaboradores = useMemo(
-    () => filterCollaboratorsByUser(activeUser, colaboradores, subgerentes),
-    [activeUser, colaboradores, subgerentes]
+    () => filterCollaboratorsByUser(activeUser, companyColaboradores, companySubgerentes),
+    [activeUser, companyColaboradores, companySubgerentes]
   );
   const visibleEvaluaciones = useMemo(
-    () => filterEvaluationsByUser(activeUser, evaluationsKpi, subgerentes),
-    [activeUser, evaluationsKpi, subgerentes]
+    () => filterEvaluationsByUser(activeUser, companyEvaluationsKpi, companySubgerentes),
+    [activeUser, companyEvaluationsKpi, companySubgerentes]
   );
   const visibleKpiAreaTemplates = useMemo(
-    () => filterByRoleAndArea(normalizedKpiAreaTemplates, activeUser, "area", subgerentes),
-    [activeUser, normalizedKpiAreaTemplates, subgerentes]
+    () => filterByRoleAndArea(companyKpiAreaTemplates, activeUser, "area", companySubgerentes),
+    [activeUser, companyKpiAreaTemplates, companySubgerentes]
   );
   const visibleKpiMonthlyEvaluations = useMemo(
-    () => filterMonthlyKpiByUser(activeUser, normalizedKpiMonthlyEvaluations, subgerentes),
-    [activeUser, normalizedKpiMonthlyEvaluations, subgerentes]
+    () => filterMonthlyKpiByUser(activeUser, companyKpiMonthlyEvaluations, companySubgerentes),
+    [activeUser, companyKpiMonthlyEvaluations, companySubgerentes]
   );
   const visibleKpiDailyRecords = useMemo(
-    () => filterDailyKpiByUser(activeUser, kpiDailyRecords, subgerentes),
-    [activeUser, kpiDailyRecords, subgerentes]
+    () => filterDailyKpiByUser(activeUser, companyKpiDailyRecords, companySubgerentes),
+    [activeUser, companyKpiDailyRecords, companySubgerentes]
   );
   const visibleVacacionesRecords = useMemo(
-    () => filterRecordsByUserArea(activeUser, vacacionesRecords, subgerentes),
-    [activeUser, vacacionesRecords, subgerentes]
+    () => filterRecordsByUserArea(activeUser, companyVacacionesRecords, companySubgerentes),
+    [activeUser, companyVacacionesRecords, companySubgerentes]
   );
   const visiblePermisosRecords = useMemo(
-    () => filterRecordsByUserArea(activeUser, permisosRecords, subgerentes),
-    [activeUser, permisosRecords, subgerentes]
+    () => filterRecordsByUserArea(activeUser, companyPermisosRecords, companySubgerentes),
+    [activeUser, companyPermisosRecords, companySubgerentes]
   );
   const visibleAmonestacionesRecords = useMemo(
-    () => filterRecordsByUserArea(activeUser, amonestacionesRecords, subgerentes),
-    [activeUser, amonestacionesRecords, subgerentes]
+    () => filterRecordsByUserArea(activeUser, companyAmonestacionesRecords, companySubgerentes),
+    [activeUser, companyAmonestacionesRecords, companySubgerentes]
   );
   const visibleMonthlyDashboardRows = useMemo(
-    () => filterDataByUserRole(monthlyDashboardRows, activeUser, "area", subgerentes),
-    [activeUser, monthlyDashboardRows, subgerentes]
+    () => filterDataByUserRole(companyMonthlyDashboardRows, activeUser, "area", companySubgerentes),
+    [activeUser, companyMonthlyDashboardRows, companySubgerentes]
   );
   const visibleEvaluacionesEncargado = useMemo(
-    () => filterManagerEvaluationsByUser(activeUser, encargadoEvaluationsKpi, subgerentes),
-    [activeUser, encargadoEvaluationsKpi, subgerentes]
+    () => filterManagerEvaluationsByUser(activeUser, companyEvaluacionesEncargado, companySubgerentes),
+    [activeUser, companyEvaluacionesEncargado, companySubgerentes]
   );
   const visibleEvaluacionesSubgerente = useMemo(
-    () => filterSubManagerEvaluationsByUser(activeUser, subgerenteEvaluationsKpi, subgerentes),
-    [activeUser, subgerenteEvaluationsKpi, subgerentes]
+    () => filterSubManagerEvaluationsByUser(activeUser, companyEvaluacionesSubgerente, companySubgerentes),
+    [activeUser, companyEvaluacionesSubgerente, companySubgerentes]
   );
   const visibleIncidencias = useMemo(
-    () => filterDataByUserRole(incidencias, activeUser, "area", subgerentes),
-    [incidencias, activeUser, subgerentes]
+    () => filterDataByUserRole(companyIncidencias, activeUser, "area", companySubgerentes),
+    [companyIncidencias, activeUser, companySubgerentes]
   );
   const visibleSubgerentes = useMemo(
-    () => (canAccessModule(activeUser, "subgerentes") ? subgerentes : []),
-    [activeUser, subgerentes]
+    () => (canUseView("subgerentes") ? companySubgerentes : []),
+    [activeUser, companySubgerentes, currentCompany]
   );
   const visibleGerentes = useMemo(
-    () => (canAccessModule(activeUser, "gerentes") ? gerentes : []),
-    [activeUser, gerentes]
+    () => (canUseView("gerentes") ? companyGerentes : []),
+    [activeUser, companyGerentes, currentCompany]
   );
   const visibleUsuarios = useMemo(
     () => {
-      if (!canAccessModule(activeUser, "usuarios-roles")) return [];
-      return isSuperadmin(activeUser) ? usuarios : usuarios.filter((user) => !isSuperadmin(user));
+      if (!canUseView("usuarios-roles")) return [];
+      return isSuperadmin(activeUser) ? usuarios : companyUsuarios.filter((user) => !isSuperadmin(user));
     },
-    [activeUser, usuarios]
+    [activeUser, companyUsuarios, currentCompany, usuarios]
   );
   const quarterlyScopeAreas = useMemo(
-    () => getQuarterlyScopeAreas(activeUser, subgerentes),
-    [activeUser, subgerentes]
+    () => getQuarterlyScopeAreas(activeUser, companySubgerentes),
+    [activeUser, companySubgerentes]
   );
   const quarterlyTargetType = useMemo(() => getQuarterlyEvaluationTargetType(activeUser), [activeUser]);
   const quarterlyTargets = useMemo(
-    () => getAllowedQuarterlyTargets(activeUser, colaboradores, encargados, subgerentes, usuarios),
-    [activeUser, colaboradores, encargados, subgerentes, usuarios]
+    () => getAllowedQuarterlyTargets(activeUser, companyColaboradores, companyEncargados, companySubgerentes, companyUsuarios),
+    [activeUser, companyColaboradores, companyEncargados, companySubgerentes, companyUsuarios]
   );
   const visibleEvaluacionesTrimestrales = useMemo(
-    () => filterQuarterlyEvaluationsByUser(activeUser, normalizedEvaluacionesTrimestrales, subgerentes),
-    [activeUser, normalizedEvaluacionesTrimestrales, subgerentes]
+    () => filterQuarterlyEvaluationsByUser(activeUser, filterByActiveCompany(normalizedEvaluacionesTrimestrales, currentCompany), companySubgerentes),
+    [activeUser, normalizedEvaluacionesTrimestrales, currentCompany, companySubgerentes]
   );
 
   const areaSummary = useMemo(
@@ -394,8 +500,8 @@ export default function App() {
   );
 
   const globalAreaSummary = useMemo(
-    () => getAreaSummary(areas, monthlyDashboardRows, encargados, colaboradores, incidencias),
-    [areas, monthlyDashboardRows, encargados, colaboradores, incidencias]
+    () => getAreaSummary(companyAreas, companyMonthlyDashboardRows, companyEncargados, companyColaboradores, companyIncidencias),
+    [companyAreas, companyMonthlyDashboardRows, companyEncargados, companyColaboradores, companyIncidencias]
   );
 
   const encargadoSummary = useMemo(
@@ -404,8 +510,8 @@ export default function App() {
   );
 
   const subgerenteSummary = useMemo(
-    () => getSubgerenteSummary(visibleSubgerentes, globalAreaSummary, subgerenteEvaluationsKpi),
-    [visibleSubgerentes, globalAreaSummary, subgerenteEvaluationsKpi]
+    () => getSubgerenteSummary(visibleSubgerentes, globalAreaSummary, companyEvaluacionesSubgerente),
+    [visibleSubgerentes, globalAreaSummary, companyEvaluacionesSubgerente]
   );
 
   const kpiGeneral = useMemo(() => getGeneralKpi(visibleMonthlyDashboardRows), [visibleMonthlyDashboardRows]);
@@ -417,12 +523,24 @@ export default function App() {
   const canManageCatalogs = canEditMasterData(activeUser);
   const canCreateOperational = canCreateOperationalEvaluation(activeUser);
 
+  function canUseView(moduleId) {
+    if (!canAccessModule(activeUser, moduleId)) return false;
+    if (isSuperadmin(activeUser)) return true;
+    if (!currentCompany) return false;
+    return companyHasModule(currentCompany, moduleId);
+  }
+
+  function withCurrentCompany(record) {
+    if (isSuperadmin(activeUser)) return record;
+    return attachCompanyToRecord(record, currentCompany);
+  }
+
   function addRecord(setter, prefix, record) {
-    setter((current) => [...current, { id: createId(prefix), ...record }]);
+    setter((current) => [...current, withCurrentCompany({ id: createId(prefix), ...record })]);
   }
 
   function upsertArea(record) {
-    const saved = { ...record, id: record.id || createId("ARE") };
+    const saved = withCurrentCompany({ ...record, id: record.id || createId("ARE") });
     setAreas((current) => upsertListItem(current, "ARE", saved));
 
     if (saved.encargadoId) {
@@ -439,7 +557,7 @@ export default function App() {
   }
 
   function upsertEncargado(record) {
-    const saved = { ...record, id: record.id || createId("ENC") };
+    const saved = withCurrentCompany({ ...record, id: record.id || createId("ENC") });
     setEncargados((current) => upsertListItem(current, "ENC", saved));
 
     if (saved.areaId) {
@@ -473,13 +591,13 @@ export default function App() {
   }
 
   function upsertColaborador(record) {
-    const saved = { ...record, id: record.id || createId("COL") };
+    const saved = withCurrentCompany({ ...record, id: record.id || createId("COL") });
     setColaboradores((current) => upsertListItem(current, "COL", saved));
     return saved;
   }
 
   function upsertSubgerente(record) {
-    const saved = { ...record, id: record.id || createId("SUB") };
+    const saved = withCurrentCompany({ ...record, id: record.id || createId("SUB") });
     const supervisedAreas = saved.areasSupervisadas || saved.areas || [];
     setSubgerentes((current) => upsertListItem(current, "SUB", { ...saved, areasSupervisadas: supervisedAreas, areas: supervisedAreas }));
 
@@ -510,8 +628,75 @@ export default function App() {
     return saved;
   }
 
-  function login(usuario, password) {
+  function login(codigoEmpresa, usuario, password) {
+    const normalizedCompanyCode = normalizeCompanyCode(codigoEmpresa);
     const normalizedUsuario = String(usuario || "").trim().toLowerCase();
+
+    if (!normalizedCompanyCode) {
+      return { ok: false, message: "Debe indicar el codigo de empresa." };
+    }
+
+    if (["SISTEMA", "SUPERADMIN"].includes(normalizedCompanyCode)) {
+      const systemUser = usuarios.find((item) => {
+        return (
+          item.estado !== "Inactivo" &&
+          isSuperadmin(item) &&
+          String(item.usuario || "").trim().toLowerCase() === normalizedUsuario
+        );
+      });
+
+      if (!systemUser || String(systemUser.password || "") !== String(password || "")) {
+        return { ok: false, message: "Usuario o contrasena de Superadmin incorrectos." };
+      }
+
+      setActiveCompany(null);
+      setActiveSession({
+        id: systemUser.id,
+        usuario: systemUser.usuario,
+        loggedAt: new Date().toISOString(),
+        currentCompanyId: null,
+        currentCompanyCode: "SISTEMA",
+        currentCompanyName: "Sistema",
+      });
+      setView("superadminPanel");
+      return { ok: true };
+    }
+
+    const company = companies.find((item) => normalizeCompanyCode(item.codigoEmpresa) === normalizedCompanyCode);
+    if (!company) {
+      return { ok: false, message: "Codigo de empresa no registrado." };
+    }
+    if (company.estado === "Inactiva" || company.estado === "Suspendida") {
+      return { ok: false, message: "Esta empresa no esta activa." };
+    }
+
+    const companyUser = usuarios.find((item) => {
+      const sameUsername = String(item.usuario || "").trim().toLowerCase() === normalizedUsuario;
+      const legacyDefaultUser = !item.empresaId && !item.codigoEmpresa && normalizedCompanyCode === "SUPERMIX";
+      const sameCompany =
+        item.empresaId === company.id ||
+        normalizeCompanyCode(item.codigoEmpresa || "") === normalizeCompanyCode(company.codigoEmpresa) ||
+        legacyDefaultUser;
+      return item.estado !== "Inactivo" && !isSuperadmin(item) && sameUsername && sameCompany;
+    });
+
+    if (!companyUser || String(companyUser.password || "") !== String(password || "")) {
+      return { ok: false, message: "Usuario o contrasena incorrectos." };
+    }
+
+    const normalizedCompany = normalizeCompany(company);
+    setActiveCompany(normalizedCompany);
+    setActiveSession({
+      id: companyUser.id,
+      usuario: companyUser.usuario,
+      loggedAt: new Date().toISOString(),
+      currentCompanyId: normalizedCompany.id,
+      currentCompanyCode: normalizedCompany.codigoEmpresa,
+      currentCompanyName: normalizedCompany.nombreEmpresa,
+    });
+    setView("dashboard");
+    return { ok: true };
+
     const user = usuarios.find((item) => {
       return item.estado !== "Inactivo" && String(item.usuario || "").toLowerCase() === normalizedUsuario;
     });
@@ -527,12 +712,13 @@ export default function App() {
 
   function logout() {
     setActiveSession(null);
+    setActiveCompany(null);
     setView("dashboard");
   }
 
   function upsertUser(record) {
     const normalized = normalizeUser(record);
-    const saved = { ...normalized, id: normalized.id || createId("USR") };
+    const saved = withCurrentCompany({ ...normalized, id: normalized.id || createId("USR") });
 
     if (isSuperadmin(saved) && !isSuperadmin(activeUser)) {
       window.alert("Solo el Superadmin puede crear o editar usuarios Superadmin.");
@@ -606,7 +792,62 @@ export default function App() {
       updatedAt: new Date().toISOString(),
     });
 
+    const duplicate = companies.some(
+      (company) => company.id !== saved.id && normalizeCompanyCode(company.codigoEmpresa) === saved.codigoEmpresa
+    );
+    if (duplicate) {
+      window.alert("Ya existe una empresa con ese codigo.");
+      return null;
+    }
+
     setCompanies((current) => upsertListItem(current, "EMP", saved));
+    return saved;
+  }
+
+  function createInitialCompanyManager(record) {
+    if (!isSuperadmin(activeUser)) {
+      window.alert("Solo el Superadmin puede crear el gerente inicial.");
+      return null;
+    }
+
+    const company = companies.find((item) => item.id === record.companyId);
+    if (!company) {
+      window.alert("Seleccione una empresa valida.");
+      return null;
+    }
+
+    const username = String(record.usuario || "").trim().toLowerCase();
+    const exists = usuarios.some((user) => {
+      return (
+        !isSuperadmin(user) &&
+        String(user.usuario || "").trim().toLowerCase() === username &&
+        (user.empresaId === company.id ||
+          normalizeCompanyCode(user.codigoEmpresa || "") === normalizeCompanyCode(company.codigoEmpresa))
+      );
+    });
+
+    if (exists) {
+      window.alert("Ya existe un usuario con ese nombre dentro de esta empresa.");
+      return null;
+    }
+
+    const saved = normalizeUser({
+      id: record.id || createId("USR"),
+      nombre: record.nombre,
+      usuario: record.usuario,
+      password: record.password || "1234",
+      rol: ROLES.GERENTE,
+      areaAsignada: "",
+      areasSupervisadas: [],
+      areasAsignadas: [],
+      estado: "Activo",
+      empresaId: company.id,
+      codigoEmpresa: normalizeCompanyCode(company.codigoEmpresa),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    setUsuarios((current) => [...current, saved]);
     return saved;
   }
 
@@ -657,7 +898,7 @@ export default function App() {
       evaluatedName: record.evaluatedName || record.nombreColaborador || "",
       evaluatedRole: record.evaluatedRole || record.cargo || "",
     });
-    const saved = { ...normalized, id: normalized.id || createId("ETRI") };
+    const saved = withCurrentCompany({ ...normalized, id: normalized.id || createId("ETRI") });
 
     setEvaluacionesTrimestrales((current) => {
       const exists = current.some((evaluation) => evaluation.id === saved.id);
@@ -670,7 +911,7 @@ export default function App() {
 
   function upsertKpiAreaTemplate(record) {
     const normalized = normalizeTemplate(record);
-    const saved = { ...normalized, id: normalized.id || createId("KPT") };
+    const saved = withCurrentCompany({ ...normalized, id: normalized.id || createId("KPT") });
 
     setKpiAreaTemplates((current) => {
       const exists = current.some((template) => template.id === saved.id);
@@ -706,9 +947,10 @@ export default function App() {
   }
 
   function resetOnlyKpiTemplates() {
-    resetKpiTemplatesOnly(initialKpiAreaTemplates);
-    setKpiAreaTemplates(initialKpiAreaTemplates);
-    return initialKpiAreaTemplates;
+    const nextTemplates = initialKpiAreaTemplates.map((template) => withCurrentCompany(normalizeTemplate(template)));
+    resetKpiTemplatesOnly(nextTemplates);
+    setKpiAreaTemplates(nextTemplates);
+    return nextTemplates;
   }
 
   function upsertKpiMonthlyEvaluation(record) {
@@ -722,7 +964,7 @@ export default function App() {
       evaluadorRol: record.evaluadorRol || activeUser?.rol || "",
       createdAt: record.createdAt || new Date().toISOString(),
     });
-    const saved = { ...normalized, id: normalized.id || createId("KPM") };
+    const saved = withCurrentCompany({ ...normalized, id: normalized.id || createId("KPM") });
 
     setKpiMonthlyEvaluations((current) => {
       const exists = current.some((evaluation) => evaluation.id === saved.id);
@@ -735,34 +977,35 @@ export default function App() {
 
   function upsertKpiDailyRecord(record) {
     const normalized = normalizeDailyKpiRecord(record, activeUser, colaboradores, areas, encargados);
-    const saved = { ...normalized, id: normalized.id || createId("KPD") };
+    const saved = withCurrentCompany({ ...normalized, id: normalized.id || createId("KPD") });
     setKpiDailyRecords((current) => upsertListItem(current, "KPD", saved));
     return saved;
   }
 
   function upsertVacationRecord(record) {
     const normalized = normalizeVacationRecord(record, activeUser, colaboradores, areas, encargados);
-    const saved = { ...normalized, id: normalized.id || createId("VAC") };
+    const saved = withCurrentCompany({ ...normalized, id: normalized.id || createId("VAC") });
     setVacacionesRecords((current) => upsertListItem(current, "VAC", saved));
     return saved;
   }
 
   function upsertPermitRecord(record) {
     const normalized = normalizePermitRecord(record, activeUser, colaboradores, areas, encargados);
-    const saved = { ...normalized, id: normalized.id || createId("PER") };
+    const saved = withCurrentCompany({ ...normalized, id: normalized.id || createId("PER") });
     setPermisosRecords((current) => upsertListItem(current, "PER", saved));
     return saved;
   }
 
   function upsertWarningRecord(record) {
     const normalized = normalizeWarningRecord(record, activeUser, colaboradores, areas, encargados);
-    const saved = { ...normalized, id: normalized.id || createId("AMO") };
+    const saved = withCurrentCompany({ ...normalized, id: normalized.id || createId("AMO") });
     setAmonestacionesRecords((current) => upsertListItem(current, "AMO", saved));
     return saved;
   }
 
   function renderView() {
-    const effectiveView = canAccessModule(activeUser, view) ? view : "dashboard";
+    const fallbackView = isSuperadmin(activeUser) ? "superadminPanel" : "dashboard";
+    const effectiveView = canUseView(view) ? view : fallbackView;
 
     switch (effectiveView) {
       case "superadminPanel":
@@ -772,13 +1015,9 @@ export default function App() {
             onNavigate={setView}
             companies={companies}
             usuarios={usuarios}
-            colaboradores={colaboradores}
-            areas={areas}
-            kpiTemplates={normalizedKpiAreaTemplates}
-            monthlyEvaluations={normalizedKpiMonthlyEvaluations}
-            quarterlyEvaluations={normalizedEvaluacionesTrimestrales}
             configuracion={safeConfig}
             onSaveCompany={upsertCompany}
+            onCreateInitialCompanyManager={createInitialCompanyManager}
             onChangeUserPassword={changeUserPassword}
           />
         );
@@ -789,13 +1028,9 @@ export default function App() {
             onNavigate={setView}
             companies={companies}
             usuarios={usuarios}
-            colaboradores={colaboradores}
-            areas={areas}
-            kpiTemplates={normalizedKpiAreaTemplates}
-            monthlyEvaluations={normalizedKpiMonthlyEvaluations}
-            quarterlyEvaluations={normalizedEvaluacionesTrimestrales}
             configuracion={safeConfig}
             onSaveCompany={upsertCompany}
+            onCreateInitialCompanyManager={createInitialCompanyManager}
             onChangeUserPassword={changeUserPassword}
             focusSection="companies"
           />
@@ -806,7 +1041,7 @@ export default function App() {
             areas={visibleAreas}
             areaSummary={areaSummary}
             encargados={visibleEncargados}
-            subgerentes={subgerentes}
+            subgerentes={visibleSubgerentes}
             canCreate={canManageCatalogs}
             canEdit={canManageCatalogs}
             onSave={upsertArea}
@@ -817,7 +1052,7 @@ export default function App() {
           <Encargados
             encargados={visibleEncargados}
             areas={visibleAreas}
-            subgerentes={subgerentes}
+            subgerentes={visibleSubgerentes}
             colaboradores={visibleColaboradores}
             encargadoSummary={encargadoSummary}
             canCreate={canManageCatalogs}
@@ -846,7 +1081,7 @@ export default function App() {
             colaboradores={visibleColaboradores}
             encargados={visibleEncargados}
             areas={visibleAreas}
-            subgerentes={subgerentes}
+            subgerentes={visibleSubgerentes}
             activeUser={activeUser}
             canCreate={false}
             onCreateColaborador={(record) => addRecord(setEvaluaciones, "EVAL", record)}
@@ -868,7 +1103,7 @@ export default function App() {
         return (
           <EvaluacionSubgerentes
             evaluaciones={visibleEvaluacionesSubgerente}
-            subgerentes={subgerentes}
+            subgerentes={visibleSubgerentes}
             subgerenteSummary={subgerenteSummary}
             activeUser={activeUser}
             onCreateEvaluation={(record) => addRecord(setEvaluacionesSubgerente, "ESUB", record)}
@@ -878,7 +1113,7 @@ export default function App() {
         return (
           <EvaluacionTrimestral
             evaluaciones={visibleEvaluacionesTrimestrales}
-            colaboradores={colaboradores}
+            colaboradores={visibleColaboradores}
             quarterlyTargets={quarterlyTargets}
             targetType={quarterlyTargetType}
             activeUser={activeUser}
@@ -892,7 +1127,7 @@ export default function App() {
         return (
           <PlantillasKpiArea
             templates={visibleKpiAreaTemplates}
-            areas={areas}
+            areas={visibleAreas}
             activeUser={activeUser}
             onSaveTemplate={upsertKpiAreaTemplate}
             onDeactivateTemplate={deactivateKpiAreaTemplate}
@@ -977,8 +1212,8 @@ export default function App() {
           <Subgerentes
             subgerentes={visibleSubgerentes}
             subgerenteSummary={subgerenteSummary}
-            areas={areas}
-            usuarios={usuarios}
+            areas={visibleAreas}
+            usuarios={companyUsuarios}
             canCreate={canCreateSubgerentes(activeUser)}
             canEdit={canManageCatalogs}
             onSave={upsertSubgerente}
@@ -996,10 +1231,10 @@ export default function App() {
         return (
           <UsuariosRoles
             usuarios={visibleUsuarios}
-            areas={areas}
-            encargados={encargados}
-            subgerentes={subgerentes}
-            colaboradores={colaboradores}
+            areas={isSuperadmin(activeUser) ? areas : visibleAreas}
+            encargados={isSuperadmin(activeUser) ? encargados : visibleEncargados}
+            subgerentes={isSuperadmin(activeUser) ? subgerentes : visibleSubgerentes}
+            colaboradores={isSuperadmin(activeUser) ? colaboradores : visibleColaboradores}
             activeUser={activeUser}
             canCreate={canCreateUsers(activeUser)}
             onSave={upsertUser}
@@ -1013,7 +1248,7 @@ export default function App() {
         return (
           <Configuracion
             configuracion={safeConfig}
-            areas={areas}
+            areas={isSuperadmin(activeUser) ? areas : visibleAreas}
             canView={canAccessSettings(activeUser)}
             onSave={setConfiguracion}
             onBack={() => setView("dashboard")}
@@ -1044,7 +1279,7 @@ export default function App() {
     return <Login supermarketName={safeConfig.nombreSupermercado} onLogin={login} />;
   }
 
-  const effectiveView = canAccessModule(activeUser, view) ? view : "dashboard";
+  const effectiveView = canUseView(view) ? view : isSuperadmin(activeUser) ? "superadminPanel" : "dashboard";
   const effectiveModuleLabel = MODULES.find((module) => module.id === effectiveView)?.label || "Dashboard";
 
   return (

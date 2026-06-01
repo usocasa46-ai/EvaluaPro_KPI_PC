@@ -2,9 +2,7 @@ import { useMemo, useState } from "react";
 import {
   Activity,
   Building2,
-  ChartColumn,
   CheckCircle2,
-  ClipboardCheck,
   DatabaseBackup,
   FileText,
   KeyRound,
@@ -21,18 +19,25 @@ import FormField from "../components/FormField";
 import Modal from "../components/Modal";
 import { MODULES, getPermissionMessage, isSuperadmin } from "../services/permissionsService";
 import { normalizeConfig } from "../services/configService";
-import { ensureDefaultCompanies } from "../services/companyService";
+import {
+  DEFAULT_COMPANY_MODULES,
+  ensureDefaultCompanies,
+  normalizeCompanyCode,
+} from "../services/companyService";
 import { STORAGE_KEYS, readStorage } from "../services/storageService";
 
 const emptyCompanyForm = {
-  nombre: "",
+  codigoEmpresa: "",
+  nombreEmpresa: "",
+  tipoNegocio: "Supermercado",
+  estado: "Activa",
+  modulosActivos: DEFAULT_COMPANY_MODULES,
   rnc: "",
   direccion: "",
   telefono: "",
   correo: "",
   responsable: "",
   plan: "Local",
-  estado: "Activa",
   observacion: "",
 };
 
@@ -41,6 +46,13 @@ const emptyPasswordForm = {
   userName: "",
   password: "",
   confirmPassword: "",
+};
+
+const emptyManagerForm = {
+  companyId: "",
+  nombre: "",
+  usuario: "",
+  password: "1234",
 };
 
 function safeArray(value) {
@@ -56,21 +68,9 @@ function formatNumber(value) {
   return safeNumber(value).toLocaleString("es-DO");
 }
 
-function isCurrentMonth(record) {
-  const now = new Date();
-  const currentPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const candidates = [record?.periodo, record?.fecha, record?.fechaEvaluacion, record?.createdAt].filter(Boolean);
-  return candidates.some((candidate) => String(candidate).startsWith(currentPeriod));
-}
-
 function getFallbackSnapshot() {
   return {
     usuarios: safeArray(readStorage(STORAGE_KEYS.usuarios, [])),
-    colaboradores: safeArray(readStorage(STORAGE_KEYS.colaboradores, [])),
-    areas: safeArray(readStorage(STORAGE_KEYS.areas, [])),
-    kpiTemplates: safeArray(readStorage(STORAGE_KEYS.kpiAreaTemplates, [])),
-    monthlyEvaluations: safeArray(readStorage(STORAGE_KEYS.kpiMonthlyEvaluations, [])),
-    quarterlyEvaluations: safeArray(readStorage(STORAGE_KEYS.evaluacionesTrimestrales, [])),
     companies: safeArray(readStorage(STORAGE_KEYS.companies, [])),
     config: normalizeConfig(readStorage(STORAGE_KEYS.configuracion, {})),
     auditLog: safeArray(readStorage("audit_log", [])),
@@ -82,18 +82,16 @@ export default function SuperadminPanel({
   onNavigate,
   companies,
   usuarios,
-  colaboradores,
-  areas,
-  kpiTemplates,
-  monthlyEvaluations,
-  quarterlyEvaluations,
   configuracion,
   onSaveCompany,
+  onCreateInitialCompanyManager,
   onChangeUserPassword,
   focusSection = "",
 }) {
   const [companyModalOpen, setCompanyModalOpen] = useState(false);
   const [companyForm, setCompanyForm] = useState(emptyCompanyForm);
+  const [managerModalOpen, setManagerModalOpen] = useState(false);
+  const [managerForm, setManagerForm] = useState(emptyManagerForm);
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
   const [passwordForm, setPasswordForm] = useState(emptyPasswordForm);
   const [message, setMessage] = useState("");
@@ -106,11 +104,6 @@ export default function SuperadminPanel({
     safeArray(companies?.length ? companies : fallback.companies),
     config
   );
-  const systemCollaborators = safeArray(colaboradores?.length ? colaboradores : fallback.colaboradores);
-  const systemAreas = safeArray(areas?.length ? areas : fallback.areas);
-  const systemTemplates = safeArray(kpiTemplates?.length ? kpiTemplates : fallback.kpiTemplates);
-  const systemMonthly = safeArray(monthlyEvaluations?.length ? monthlyEvaluations : fallback.monthlyEvaluations);
-  const systemQuarterly = safeArray(quarterlyEvaluations?.length ? quarterlyEvaluations : fallback.quarterlyEvaluations);
   const auditLog = fallback.auditLog;
 
   if (!isSuperadmin(activeUser)) {
@@ -121,32 +114,38 @@ export default function SuperadminPanel({
     );
   }
 
-  const evaluationsThisMonth = [...systemMonthly.filter(isCurrentMonth), ...systemQuarterly.filter(isCurrentMonth)].length;
-  const activeModules = MODULES.length;
-  const activeUsers = systemUsers.filter((user) => user?.estado !== "Inactivo").length;
-  const activeTemplates = systemTemplates.filter((template) => template?.estado !== "Inactivo").length;
-  const activeCompanies = systemCompanies.filter((company) => company?.estado !== "Inactiva").length;
-  const currentCompany = config.companyName || config.nombreEmpresa || "EvaluaPro KPI Supermercado";
+  const moduleOptions = DEFAULT_COMPANY_MODULES.map((moduleId) => {
+    const module = MODULES.find((item) => item.id === moduleId);
+    return { value: moduleId, label: module?.label || moduleId };
+  });
+  const operationalUsers = systemUsers.filter((user) => !isSuperadmin(user));
+  const activeUsers = operationalUsers.filter((user) => user?.estado !== "Inactivo").length;
+  const activeCompanies = systemCompanies.filter((company) => company?.estado === "Activa").length;
+  const suspendedCompanies = systemCompanies.filter((company) =>
+    ["Inactiva", "Suspendida"].includes(company?.estado)
+  ).length;
+  const currentSystemName = config.nombreSistema || "EvaluaPro KPI Supermercado";
   const primaryColor = config.primaryColor || config.visual?.colorPrincipal || "#2563eb";
+  const version = "1.0.0";
 
   const statCards = [
-    { label: "Empresas registradas", value: systemCompanies.length, detail: `Activas: ${activeCompanies}`, icon: Building2, accent: "#f5b942" },
-    { label: "Usuarios en el sistema", value: systemUsers.length, detail: `Activos: ${activeUsers}`, icon: Users, accent: "#2563eb" },
-    { label: "Colaboradores totales", value: systemCollaborators.length, detail: "Datos operativos", icon: Users, accent: "#38bdf8" },
-    { label: "KPI creados", value: systemTemplates.length, detail: `Activos: ${activeTemplates}`, icon: ClipboardCheck, accent: "#ef476f" },
-    { label: "Evaluaciones del mes", value: evaluationsThisMonth, detail: "KPI mensual + trimestral", icon: ChartColumn, accent: "#8b5cf6" },
-    { label: "Modulos activos", value: activeModules, detail: "Control global", icon: ShieldCheck, accent: "#10b981" },
+    { label: "Empresas registradas", value: systemCompanies.length, detail: "Clientes del programa", icon: Building2, accent: "#f5b942" },
+    { label: "Empresas activas", value: activeCompanies, detail: "Con acceso habilitado", icon: CheckCircle2, accent: "#10b981" },
+    { label: "Usuarios totales", value: operationalUsers.length, detail: `Activos: ${activeUsers}`, icon: Users, accent: "#2563eb" },
+    { label: "Modulos disponibles", value: DEFAULT_COMPANY_MODULES.length, detail: "Activables por empresa", icon: Network, accent: "#8b5cf6" },
+    { label: "Empresas suspendidas", value: suspendedCompanies, detail: "Sin acceso operativo", icon: Lock, accent: "#ef476f" },
+    { label: "Version sistema", value: version, detail: "Edicion local actual", icon: ShieldCheck, accent: "#38bdf8" },
   ];
 
   const quickAccess = [
-    { label: "Usuarios y Roles", view: "usuarios-roles", icon: KeyRound },
-    { label: "Empresas", action: "newCompany", icon: Building2 },
-    { label: "Configuracion", view: "configuracion", icon: Settings },
-    { label: "Modulos", view: "configuracion", icon: Network },
-    { label: "Reportes Globales", view: "reportes", icon: ChartColumn },
+    { label: "Usuarios Globales", view: "usuarios-roles", icon: KeyRound },
+    { label: "Nueva Empresa", action: "newCompany", icon: Building2 },
+    { label: "Gerente Inicial", action: "newManager", icon: Users },
+    { label: "Configuracion Global", view: "configuracion", icon: Settings },
+    { label: "Modulos por Empresa", action: "modules", icon: Network },
     { label: "Auditoria", action: "audit", icon: Activity },
     { label: "Respaldos", action: "backup", icon: DatabaseBackup },
-    { label: "Seguridad", action: "password", icon: Lock },
+    { label: "Cambiar Clave", action: "password", icon: Lock },
   ];
 
   function updateCompanyField(name, value) {
@@ -156,7 +155,17 @@ export default function SuperadminPanel({
   }
 
   function openCompanyModal(company) {
-    setCompanyForm(company ? { ...emptyCompanyForm, ...company } : emptyCompanyForm);
+    setCompanyForm(
+      company
+        ? {
+            ...emptyCompanyForm,
+            ...company,
+            codigoEmpresa: company.codigoEmpresa || "",
+            nombreEmpresa: company.nombreEmpresa || company.nombre || "",
+            modulosActivos: safeArray(company.modulosActivos).length ? company.modulosActivos : DEFAULT_COMPANY_MODULES,
+          }
+        : emptyCompanyForm
+    );
     setError("");
     setMessage("");
     setCompanyModalOpen(true);
@@ -164,19 +173,64 @@ export default function SuperadminPanel({
 
   function saveCompany(event) {
     event.preventDefault();
-    if (!companyForm.nombre.trim()) {
+    const codigoEmpresa = normalizeCompanyCode(companyForm.codigoEmpresa);
+    const nombreEmpresa = String(companyForm.nombreEmpresa || "").trim();
+
+    if (!codigoEmpresa) {
+      setError("El codigo de empresa es obligatorio.");
+      return;
+    }
+    if (!nombreEmpresa) {
       setError("El nombre de la empresa es obligatorio.");
       return;
     }
 
-    const saved = onSaveCompany?.(companyForm);
+    const saved = onSaveCompany?.({
+      ...companyForm,
+      codigoEmpresa,
+      nombreEmpresa,
+      nombre: nombreEmpresa,
+    });
     if (saved === null) {
       setError("No se pudo guardar la empresa.");
       return;
     }
 
     setCompanyModalOpen(false);
-    setMessage("Empresa guardada correctamente. Ya queda disponible para usar el programa.");
+    setMessage("Empresa guardada. Sus usuarios deben entrar con el codigo de empresa asignado.");
+  }
+
+  function openManagerModal(company) {
+    setManagerForm({
+      ...emptyManagerForm,
+      companyId: company?.id || systemCompanies[0]?.id || "",
+    });
+    setError("");
+    setMessage("");
+    setManagerModalOpen(true);
+  }
+
+  function updateManagerField(name, value) {
+    setManagerForm((current) => ({ ...current, [name]: value }));
+    setError("");
+    setMessage("");
+  }
+
+  function saveManager(event) {
+    event.preventDefault();
+    if (!managerForm.companyId || !managerForm.nombre.trim() || !managerForm.usuario.trim()) {
+      setError("Empresa, nombre y usuario son obligatorios para crear el gerente inicial.");
+      return;
+    }
+
+    const saved = onCreateInitialCompanyManager?.(managerForm);
+    if (saved === null) {
+      setError("No se pudo crear el gerente inicial.");
+      return;
+    }
+
+    setManagerModalOpen(false);
+    setMessage("Gerente inicial creado. Ya puede iniciar sesion con el codigo de su empresa.");
   }
 
   function openPasswordModal(user = activeUser) {
@@ -204,22 +258,22 @@ export default function SuperadminPanel({
       return;
     }
     if (passwordForm.password.length < 4) {
-      setError("La contraseña debe tener al menos 4 caracteres.");
+      setError("La contrasena debe tener al menos 4 caracteres.");
       return;
     }
     if (passwordForm.password !== passwordForm.confirmPassword) {
-      setError("Las contraseñas no coinciden.");
+      setError("Las contrasenas no coinciden.");
       return;
     }
 
     const updated = onChangeUserPassword?.(passwordForm.userId, passwordForm.password);
     if (!updated) {
-      setError("No se pudo cambiar la contraseña.");
+      setError("No se pudo cambiar la contrasena.");
       return;
     }
 
     setPasswordModalOpen(false);
-    setMessage("Contraseña actualizada correctamente.");
+    setMessage("Contrasena actualizada correctamente.");
   }
 
   function handleQuickAccess(item) {
@@ -228,9 +282,19 @@ export default function SuperadminPanel({
       return;
     }
     if (item.action === "newCompany") openCompanyModal();
+    if (item.action === "newManager") openManagerModal();
+    if (item.action === "modules") {
+      setMessage("Use Editar en Empresas / Clientes para activar o desactivar modulos por empresa.");
+    }
     if (item.action === "password") openPasswordModal(activeUser);
-    if (item.action === "audit") setMessage("Auditoria preparada para una version con backend.");
+    if (item.action === "audit") setMessage("Auditoria preparada para registrar acciones globales con backend.");
     if (item.action === "backup") setMessage("Respaldos preparados; no se ejecuto ninguna restauracion peligrosa.");
+  }
+
+  function getCompanyUserCount(company) {
+    return operationalUsers.filter((user) => {
+      return user.empresaId === company.id || normalizeCompanyCode(user.codigoEmpresa) === company.codigoEmpresa;
+    }).length;
   }
 
   return (
@@ -242,9 +306,9 @@ export default function SuperadminPanel({
               <ShieldCheck size={22} />
             </div>
             <div>
-              <p className="superadmin-kicker">Dueño del programa</p>
+              <p className="superadmin-kicker">Dueno del programa</p>
               <h1>Panel Superadmin</h1>
-              <p>Gestion global de usuarios, roles, empresas, modulos, seguridad y configuracion del sistema.</p>
+              <p>Control global de empresas, modulos, usuarios iniciales, seguridad y configuracion del sistema.</p>
             </div>
           </header>
 
@@ -258,7 +322,7 @@ export default function SuperadminPanel({
                 <article className="superadmin-metric" key={card.label} style={{ "--metric-accent": card.accent }}>
                   <div>
                     <span>{card.label}</span>
-                    <strong>{formatNumber(card.value)}</strong>
+                    <strong>{typeof card.value === "number" ? formatNumber(card.value) : card.value}</strong>
                     <small>{card.detail}</small>
                   </div>
                   <div className="superadmin-metric__icon">
@@ -273,32 +337,32 @@ export default function SuperadminPanel({
             <article className="superadmin-card superadmin-card--wide">
               <div className="superadmin-card__header">
                 <div>
-                  <h2>Resumen general del sistema</h2>
-                  <p>Vista global de empresas, usuarios y actividad del programa.</p>
+                  <h2>Centro multiempresa</h2>
+                  <p>El Superadmin administra clientes; no participa en KPI ni evaluaciones internas.</p>
                 </div>
                 <span className="superadmin-pill">Control global</span>
               </div>
               <div className="superadmin-chart" aria-hidden="true">
-                <span style={{ height: "34%" }} />
-                <span style={{ height: "58%" }} />
-                <span style={{ height: "44%" }} />
-                <span style={{ height: "76%" }} />
+                <span style={{ height: "40%" }} />
+                <span style={{ height: "68%" }} />
                 <span style={{ height: "52%" }} />
-                <span style={{ height: "88%" }} />
+                <span style={{ height: "82%" }} />
+                <span style={{ height: "58%" }} />
+                <span style={{ height: "74%" }} />
+                <span style={{ height: "48%" }} />
                 <span style={{ height: "64%" }} />
-                <span style={{ height: "42%" }} />
               </div>
               <div className="superadmin-system-strip">
                 <div>
-                  <strong>{currentCompany}</strong>
-                  <span>Empresa actual configurada</span>
+                  <strong>{currentSystemName}</strong>
+                  <span>Sistema global</span>
                 </div>
                 <div>
                   <strong style={{ color: primaryColor }}>{primaryColor}</strong>
                   <span>Color principal</span>
                 </div>
                 <div>
-                  <strong>{config.theme === "dark" || config.visual?.tema === "Oscuro" ? "Oscuro" : "Claro"}</strong>
+                  <strong>{config.visual?.tema || "Claro"}</strong>
                   <span>Tema activo</span>
                 </div>
               </div>
@@ -308,7 +372,7 @@ export default function SuperadminPanel({
               <div className="superadmin-card__header">
                 <div>
                   <h2>Accesos rapidos</h2>
-                  <p>Control de dueño del software.</p>
+                  <p>Acciones de dueno del software.</p>
                 </div>
               </div>
               <div className="superadmin-quick-grid">
@@ -328,15 +392,14 @@ export default function SuperadminPanel({
 
         <aside className="superadmin-side-rail">
           <h2>PANTALLA SUPERADMIN</h2>
-          <p>Diseñada para tener control total del sistema con informacion global y accesos rapidos.</p>
+          <p>Diseñada para controlar empresas clientes, modulos activos y accesos iniciales.</p>
           <h3>CARACTERISTICAS</h3>
           <ul>
-            <li><CheckCircle2 size={15} /> Vista global de todo el sistema</li>
-            <li><CheckCircle2 size={15} /> Control total de usuarios, roles y permisos</li>
-            <li><CheckCircle2 size={15} /> Gestion de empresas / sucursales</li>
-            <li><CheckCircle2 size={15} /> Monitoreo de modulos y actividad</li>
-            <li><CheckCircle2 size={15} /> Reportes globales y metricas generales</li>
-            <li><CheckCircle2 size={15} /> Seguridad y auditoria del sistema</li>
+            <li><CheckCircle2 size={15} /> Gestion de empresas que usan el programa</li>
+            <li><CheckCircle2 size={15} /> Activacion de modulos por empresa</li>
+            <li><CheckCircle2 size={15} /> Creacion del gerente inicial por empresa</li>
+            <li><CheckCircle2 size={15} /> Cambio de contrasenas administrativas</li>
+            <li><CheckCircle2 size={15} /> Seguridad y auditoria global</li>
           </ul>
           <h3>NOTA</h3>
           <div className="superadmin-side-note">
@@ -346,11 +409,11 @@ export default function SuperadminPanel({
       </section>
 
       <section className="superadmin-grid">
-        <article className={`superadmin-card ${focusSection === "companies" ? "is-highlighted" : ""}`}>
+        <article className={`superadmin-card superadmin-card--wide ${focusSection === "companies" ? "is-highlighted" : ""}`}>
           <div className="superadmin-card__header">
             <div>
-              <h2>Empresas / Sucursales</h2>
-              <p>Empresas registradas para usar el programa.</p>
+              <h2>Empresas / Clientes</h2>
+              <p>Cada empresa entra al programa con su propio codigo.</p>
             </div>
             <button className="button button--primary" type="button" onClick={() => openCompanyModal()}>
               <Plus size={15} />
@@ -361,9 +424,11 @@ export default function SuperadminPanel({
             <table className="superadmin-table">
               <thead>
                 <tr>
-                  <th>Nombre</th>
-                  <th>RNC</th>
+                  <th>Codigo</th>
+                  <th>Empresa</th>
+                  <th>Tipo negocio</th>
                   <th>Estado</th>
+                  <th>Modulos</th>
                   <th>Usuarios</th>
                   <th>Acciones</th>
                 </tr>
@@ -371,25 +436,30 @@ export default function SuperadminPanel({
               <tbody>
                 {systemCompanies.length ? (
                   systemCompanies.map((company) => (
-                    <tr key={company.id || company.nombre}>
-                      <td>{company.nombre || "Sin nombre"}</td>
-                      <td>{company.rnc || "-"}</td>
+                    <tr key={company.id || company.codigoEmpresa}>
+                      <td>{company.codigoEmpresa || "-"}</td>
+                      <td>{company.nombreEmpresa || company.nombre || "Sin nombre"}</td>
+                      <td>{company.tipoNegocio || "Supermercado"}</td>
                       <td>
-                        <span className={`superadmin-status ${company.estado === "Inactiva" ? "is-off" : ""}`}>
+                        <span className={`superadmin-status ${company.estado !== "Activa" ? "is-off" : ""}`}>
                           {company.estado || "Activa"}
                         </span>
                       </td>
-                      <td>{systemUsers.filter((user) => user.empresaId === company.id).length}</td>
+                      <td>{safeArray(company.modulosActivos).length}</td>
+                      <td>{getCompanyUserCount(company)}</td>
                       <td>
                         <button className="text-button" type="button" onClick={() => openCompanyModal(company)}>
                           Editar
+                        </button>
+                        <button className="text-button" type="button" onClick={() => openManagerModal(company)}>
+                          Gerente
                         </button>
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan="5">No hay empresas registradas.</td>
+                    <td colSpan="7">No hay empresas registradas.</td>
                   </tr>
                 )}
               </tbody>
@@ -400,11 +470,11 @@ export default function SuperadminPanel({
         <article className="superadmin-card">
           <div className="superadmin-card__header">
             <div>
-              <h2>Gestion de usuarios</h2>
-              <p>Usuarios globales del programa.</p>
+              <h2>Usuarios globales</h2>
+              <p>Usuarios vinculados a empresas clientes.</p>
             </div>
             <button className="text-button" type="button" onClick={() => onNavigate?.("usuarios-roles")}>
-              Abrir Usuarios y Roles
+              Abrir Usuarios
             </button>
           </div>
           <div className="superadmin-table-wrap">
@@ -414,7 +484,7 @@ export default function SuperadminPanel({
                   <th>Nombre</th>
                   <th>Usuario</th>
                   <th>Rol</th>
-                  <th>Estado</th>
+                  <th>Empresa</th>
                   <th>Acciones</th>
                 </tr>
               </thead>
@@ -425,14 +495,10 @@ export default function SuperadminPanel({
                       <td>{user.nombre || "Sin nombre"}</td>
                       <td>{user.usuario || "Sin usuario"}</td>
                       <td>{user.rol || "Sin rol"}</td>
-                      <td>
-                        <span className={`superadmin-status ${user.estado === "Inactivo" ? "is-off" : ""}`}>
-                          {user.estado || "Activo"}
-                        </span>
-                      </td>
+                      <td>{isSuperadmin(user) ? "Sistema" : user.codigoEmpresa || "-"}</td>
                       <td>
                         <button className="text-button" type="button" onClick={() => openPasswordModal(user)}>
-                          Cambiar contraseña
+                          Cambiar clave
                         </button>
                       </td>
                     </tr>
@@ -450,27 +516,27 @@ export default function SuperadminPanel({
         <article className="superadmin-card">
           <div className="superadmin-card__header">
             <div>
-              <h2>Configuracion del sistema</h2>
-              <p>Identidad, tema y parametros globales.</p>
+              <h2>Configuracion global</h2>
+              <p>Identidad general del programa.</p>
             </div>
             <Palette size={20} />
           </div>
           <div className="superadmin-config-list">
             <div>
               <span>Nombre del sistema</span>
-              <strong>{currentCompany}</strong>
+              <strong>{currentSystemName}</strong>
             </div>
             <div>
               <span>Logo configurado</span>
               <strong>{config.logoDataUrl || config.logoUrl ? "Disponible" : "Pendiente"}</strong>
             </div>
             <div>
-              <span>Areas base</span>
-              <strong>{formatNumber(systemAreas.length)}</strong>
+              <span>Empresas activas</span>
+              <strong>{formatNumber(activeCompanies)}</strong>
             </div>
             <div>
-              <span>KPI minimo</span>
-              <strong>{safeNumber(config.minimumKpi || config.kpiMinimoAceptable)}%</strong>
+              <span>Modulos base</span>
+              <strong>{formatNumber(DEFAULT_COMPANY_MODULES.length)}</strong>
             </div>
           </div>
         </article>
@@ -479,7 +545,7 @@ export default function SuperadminPanel({
           <div className="superadmin-card__header">
             <div>
               <h2>Auditoria del sistema</h2>
-              <p>Historial preparado para trazabilidad.</p>
+              <p>Historial preparado para trazabilidad global.</p>
             </div>
             <Activity size={20} />
           </div>
@@ -505,61 +571,61 @@ export default function SuperadminPanel({
           <div className="superadmin-card__header">
             <div>
               <h2>Respaldos y seguridad</h2>
-              <p>El Superadmin controla la capa de seguridad.</p>
+              <p>Capa global del dueno del programa.</p>
             </div>
             <DatabaseBackup size={20} />
           </div>
           <ul className="superadmin-check-list">
             <li>Superadmin aislado de colaboradores y evaluaciones.</li>
-            <li>Empresas guardadas sin borrar datos existentes.</li>
-            <li>Respaldos preparados para una version con backend.</li>
+            <li>Empresas guardadas en system_companies sin borrar datos.</li>
+            <li>Usuarios de empresa entran con codigo + usuario + contrasena.</li>
           </ul>
           <button className="button button--ghost" type="button" onClick={() => openPasswordModal(activeUser)}>
             <Lock size={15} />
-            Cambiar mi contraseña
+            Cambiar mi contrasena
           </button>
           <div className="superadmin-warning">
-            Cambiar contraseña del Superadmin despues del primer acceso.
+            Cambie la clave admin123 despues del primer acceso real.
           </div>
         </article>
 
         <article className="superadmin-card superadmin-card--future">
           <div className="superadmin-card__header">
             <div>
-              <h2>Empresas/clientes futuros</h2>
-              <p>Preparado para multiempresa en el futuro.</p>
+              <h2>Separacion multiempresa</h2>
+              <p>La informacion operativa se filtra por empresa activa.</p>
             </div>
             <Building2 size={20} />
           </div>
           <div className="superadmin-company">
-            <strong>{currentCompany}</strong>
-            <span>Empresa actual</span>
+            <strong>{systemCompanies[0]?.codigoEmpresa || "SUPERMIX"}</strong>
+            <span>Empresa base migrada</span>
           </div>
           <p className="superadmin-note">
-            La base de empresas ya existe. La separacion completa de datos por empresa queda pendiente para backend/SQLite.
+            Los datos viejos se conservan y reciben empresaId/codigoEmpresa para no mezclarse con nuevas empresas.
           </p>
         </article>
       </section>
 
       <footer className="superadmin-footer-note">
         <ShieldCheck size={18} />
-        <span>
-          {getPermissionMessage()} aplica a usuarios no autorizados; esta pantalla no guarda secretos reales en frontend.
-        </span>
+        <span>{getPermissionMessage()} aplica a usuarios no autorizados; el Superadmin no entra al flujo operativo.</span>
       </footer>
 
       {companyModalOpen ? (
-        <Modal title={companyForm.id ? "Editar empresa / sucursal" : "Nueva empresa / sucursal"} onClose={() => setCompanyModalOpen(false)}>
+        <Modal title={companyForm.id ? "Editar empresa" : "Nueva empresa"} onClose={() => setCompanyModalOpen(false)}>
           <form className="entity-form" onSubmit={saveCompany}>
             <div className="form-grid">
-              <FormField field={{ name: "nombre", label: "Nombre de la empresa", required: true }} value={companyForm.nombre} onChange={updateCompanyField} />
+              <FormField field={{ name: "codigoEmpresa", label: "Codigo de empresa", required: true }} value={companyForm.codigoEmpresa} onChange={updateCompanyField} />
+              <FormField field={{ name: "nombreEmpresa", label: "Nombre de empresa", required: true }} value={companyForm.nombreEmpresa} onChange={updateCompanyField} />
+              <FormField field={{ name: "tipoNegocio", label: "Tipo de negocio", required: true }} value={companyForm.tipoNegocio} onChange={updateCompanyField} />
+              <FormField field={{ name: "estado", label: "Estado", type: "select", options: ["Activa", "Suspendida", "Inactiva"], required: true }} value={companyForm.estado} onChange={updateCompanyField} />
               <FormField field={{ name: "rnc", label: "RNC" }} value={companyForm.rnc} onChange={updateCompanyField} />
               <FormField field={{ name: "telefono", label: "Telefono" }} value={companyForm.telefono} onChange={updateCompanyField} />
               <FormField field={{ name: "correo", label: "Correo" }} value={companyForm.correo} onChange={updateCompanyField} />
-              <FormField field={{ name: "direccion", label: "Direccion", type: "textarea", rows: 2 }} value={companyForm.direccion} onChange={updateCompanyField} />
               <FormField field={{ name: "responsable", label: "Responsable" }} value={companyForm.responsable} onChange={updateCompanyField} />
-              <FormField field={{ name: "plan", label: "Plan", type: "select", options: ["Local", "Estandar", "Premium"] }} value={companyForm.plan} onChange={updateCompanyField} />
-              <FormField field={{ name: "estado", label: "Estado", type: "select", options: ["Activa", "Inactiva"] }} value={companyForm.estado} onChange={updateCompanyField} />
+              <FormField field={{ name: "modulosActivos", label: "Modulos activos", type: "multiselect", options: moduleOptions, help: "Use Ctrl/Cmd para seleccionar varios modulos." }} value={companyForm.modulosActivos} onChange={updateCompanyField} />
+              <FormField field={{ name: "direccion", label: "Direccion", type: "textarea", rows: 2 }} value={companyForm.direccion} onChange={updateCompanyField} />
               <FormField field={{ name: "observacion", label: "Observacion", type: "textarea", rows: 2 }} value={companyForm.observacion} onChange={updateCompanyField} />
             </div>
             {error ? <p className="form-error">{error}</p> : null}
@@ -576,17 +642,53 @@ export default function SuperadminPanel({
         </Modal>
       ) : null}
 
+      {managerModalOpen ? (
+        <Modal title="Crear gerente inicial" onClose={() => setManagerModalOpen(false)}>
+          <form className="entity-form" onSubmit={saveManager}>
+            <div className="form-grid">
+              <FormField
+                field={{
+                  name: "companyId",
+                  label: "Empresa",
+                  type: "select",
+                  required: true,
+                  options: systemCompanies.map((company) => ({
+                    value: company.id,
+                    label: `${company.codigoEmpresa} - ${company.nombreEmpresa || company.nombre}`,
+                  })),
+                }}
+                value={managerForm.companyId}
+                onChange={updateManagerField}
+              />
+              <FormField field={{ name: "nombre", label: "Nombre del gerente", required: true }} value={managerForm.nombre} onChange={updateManagerField} />
+              <FormField field={{ name: "usuario", label: "Usuario", required: true }} value={managerForm.usuario} onChange={updateManagerField} />
+              <FormField field={{ name: "password", label: "Contrasena temporal", type: "password", required: true }} value={managerForm.password} onChange={updateManagerField} />
+            </div>
+            {error ? <p className="form-error">{error}</p> : null}
+            <footer className="modal__footer">
+              <button className="button button--ghost" type="button" onClick={() => setManagerModalOpen(false)}>
+                Cancelar
+              </button>
+              <button className="button button--primary" type="submit">
+                <Save size={15} />
+                Crear gerente
+              </button>
+            </footer>
+          </form>
+        </Modal>
+      ) : null}
+
       {passwordModalOpen ? (
-        <Modal title={`Cambiar contraseña - ${passwordForm.userName || "Usuario"}`} onClose={() => setPasswordModalOpen(false)}>
+        <Modal title={`Cambiar contrasena - ${passwordForm.userName || "Usuario"}`} onClose={() => setPasswordModalOpen(false)}>
           <form className="entity-form" onSubmit={savePassword}>
             <div className="form-grid">
               <FormField
-                field={{ name: "password", label: "Nueva contraseña", type: "password", required: true }}
+                field={{ name: "password", label: "Nueva contrasena", type: "password", required: true }}
                 value={passwordForm.password}
                 onChange={updatePasswordField}
               />
               <FormField
-                field={{ name: "confirmPassword", label: "Confirmar contraseña", type: "password", required: true }}
+                field={{ name: "confirmPassword", label: "Confirmar contrasena", type: "password", required: true }}
                 value={passwordForm.confirmPassword}
                 onChange={updatePasswordField}
               />
@@ -598,7 +700,7 @@ export default function SuperadminPanel({
               </button>
               <button className="button button--primary" type="submit">
                 <Save size={15} />
-                Guardar contraseña
+                Guardar contrasena
               </button>
             </footer>
           </form>

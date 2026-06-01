@@ -18,7 +18,9 @@ export const STORAGE_KEYS = {
   evaluacionesEncargado: "kpi_evaluaciones_encargado",
   gerentes: "kpi_gerentes",
   usuarios: "app_users",
-  companies: "app_companies",
+  companies: "system_companies",
+  legacyCompanies: "app_companies",
+  activeCompany: "active_company",
   legacyUsuarios: "kpi_usuarios",
   configuracion: "system_config",
   legacyConfiguracion: "kpi_configuracion",
@@ -48,6 +50,7 @@ export const PRESERVED_STORAGE_KEYS = [
   STORAGE_KEYS.companies,
   STORAGE_KEYS.configuracion,
   STORAGE_KEYS.activeUserId,
+  STORAGE_KEYS.activeCompany,
 ];
 
 export function readStorage(key, fallback) {
